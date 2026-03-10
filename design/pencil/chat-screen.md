@@ -159,3 +159,7 @@ If you get stuck, do not redesign the whole page. Only ask:
 1. What is the biggest frame here?
 2. What are the child frames inside it?
 3. Which card should the eye see first?
+
+## Paste-ready short prompt
+
+Design a responsive dark web app screen for "PIXY TERMINAL", a browser UI for a persistent Hermes AI agent. This is the main chat command center. Make it feel like a calm, premium operator console, not a generic SaaS dashboard and not neon cyberpunk. Use a dark graphite base, pale mint / oxidized teal accents, and warm amber for warnings. Create a compact header, a dominant left conversation panel, and a narrower right intelligence rail. Required blocks: runtime badge, session label, markdown-friendly chat transcript, strong multiline prompt composer with primary CTA, warning card, diagnostics card, memory preview card, and recent sessions card. On desktop the layout should be two-column with the chat area dominant; on mobile the right rail should stack below the chat and input area. Use layered glass surfaces, subtle grid texture, clear hierarchy, expressive display typography plus mono support, and make the composer feel powerful rather than form-like. Avoid purple-heavy palettes, default chatbot layouts, flat admin dashboard styling, and excessive glow.
