@@ -1,0 +1,1 @@
+"""PIXY TERMINAL FastAPI application."""
