@@ -36,7 +36,7 @@ function statCards(data: {
     {
       label: "Runtime",
       value: data.liveMode,
-      copy: "Simulator stays explicit until Hermes is installed.",
+      copy: "Python API가 아니어도 CLI fallback으로 live 상태를 유지합니다.",
     },
   ];
 }
@@ -76,7 +76,12 @@ export function DashboardPanel() {
     skills: skills?.skills.length ?? 0,
     sessions: sessions?.sessions.length ?? 0,
     memoryWords: memory?.content.split(/\s+/).filter(Boolean).length ?? 0,
-    liveMode: health?.hermes_available ? "Live Hermes" : "Simulator",
+    liveMode:
+      health?.runtime_mode === "python_api"
+        ? "Hermes API"
+        : health?.runtime_mode === "cli"
+          ? "Hermes CLI"
+          : "Simulator",
   });
 
   return (
@@ -180,9 +185,11 @@ export function DashboardPanel() {
             </p>
             <div className="mt-4 space-y-3 text-sm leading-7 text-white/90">
               <p>Hermes home: {health?.hermes_home ?? "Unknown"}</p>
+              <p>Runtime mode: {health?.runtime_mode ?? "Unknown"}</p>
               <p>Memory file: {health?.memory_path ?? "Not found"}</p>
               <p>Skills source: {skills?.source ?? "Unknown"}</p>
               <p>Sessions source: {sessions?.source ?? "Unknown"}</p>
+              {health?.issues.map((issue) => <p key={issue}>{issue}</p>)}
               {error ? <p className="text-[var(--danger)]">{error}</p> : null}
             </div>
           </article>

@@ -48,6 +48,7 @@ Optional environment variables:
 ## Hermes Integration Notes
 
 - Runtime import target: `run_agent.AIAgent`
+- Fallback runtime: `hermes chat -q ...` CLI bridge
 - Skills source: `~/.hermes/skills`
 - Sessions source: `~/.hermes/sessions`
 - Memory source: `~/.hermes/memories/MEMORY.md` with fallback to `~/.hermes/MEMORY.md`

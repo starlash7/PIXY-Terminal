@@ -149,7 +149,13 @@ export function ChatWorkspace() {
     <AppShell
       title="A browser-native shell for Hermes."
       description="Chat from desktop or phone, inspect the memory layer, and keep skill growth visible instead of buried in local files."
-      accentLabel={health?.hermes_available ? "Live Hermes" : "Simulator"}
+      accentLabel={
+        health?.runtime_mode === "python_api"
+          ? "Live Hermes API"
+          : health?.runtime_mode === "cli"
+            ? "Live Hermes CLI"
+            : "Simulator"
+      }
     >
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.8fr)]">
         <section className="glass-panel rounded-[1.75rem] p-3 sm:p-4">
@@ -164,9 +170,11 @@ export function ChatWorkspace() {
             </div>
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-xs text-[var(--muted)]">
               <span className="pulse-dot h-2 w-2 rounded-full bg-[var(--accent-strong)]" />
-              {health?.hermes_available
-                ? "Hermes runtime detected"
-                : "Hermes missing, simulator enabled"}
+              {health?.runtime_mode === "python_api"
+                ? "Hermes Python API detected"
+                : health?.runtime_mode === "cli"
+                  ? "Hermes CLI fallback detected"
+                  : "Hermes missing, simulator enabled"}
             </div>
           </div>
 
@@ -232,6 +240,19 @@ export function ChatWorkspace() {
               <div className="mt-3 space-y-2 text-sm leading-7 text-white">
                 {warnings.map((warning) => (
                   <p key={warning}>{warning}</p>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {health?.issues.length ? (
+            <section className="glass-panel rounded-[1.5rem] border-[rgba(255,207,112,0.2)] p-4">
+              <p className="text-xs uppercase tracking-[0.28em] text-[var(--warning)]">
+                Runtime diagnostics
+              </p>
+              <div className="mt-3 space-y-2 text-sm leading-7 text-white">
+                {health.issues.map((issue) => (
+                  <p key={issue}>{issue}</p>
                 ))}
               </div>
             </section>

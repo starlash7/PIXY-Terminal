@@ -50,6 +50,11 @@ export type SessionsResponse = {
 export type HealthResponse = {
   status: string;
   hermes_available: boolean;
+  runtime_mode: string;
+  python_api_available: boolean;
+  cli_available: boolean;
   hermes_home: string;
+  hermes_home_exists: boolean;
   memory_path: string | null;
+  issues: string[];
 };

@@ -4,6 +4,9 @@ import importlib
 import json
 import logging
 import os
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("pixy.server")
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class ApiError(Exception):
@@ -112,8 +116,13 @@ class SessionsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     hermes_available: bool
+    runtime_mode: str
+    python_api_available: bool
+    cli_available: bool
     hermes_home: str
+    hermes_home_exists: bool
     memory_path: str | None
+    issues: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -179,14 +188,20 @@ def extract_summary(path: Path) -> str:
 
 class HermesRuntime:
     def __init__(self) -> None:
+        self._python_error: str | None = None
         self._agent_class = self._load_agent_class()
+        self._cli_path = shutil.which(os.getenv("PIXY_HERMES_COMMAND", "hermes"))
 
     def _load_agent_class(self) -> type[Any] | None:
         candidates = (("run_agent", "AIAgent"), ("hermes.agent", "AIAgent"))
         for module_name, attr_name in candidates:
             try:
                 module = importlib.import_module(module_name)
-            except ModuleNotFoundError:
+            except ModuleNotFoundError as error:
+                self._python_error = str(error)
+                continue
+            except Exception as error:
+                self._python_error = str(error)
                 continue
             agent_class = getattr(module, attr_name, None)
             if agent_class is not None:
@@ -194,11 +209,114 @@ class HermesRuntime:
         return None
 
     @property
-    def available(self) -> bool:
+    def python_api_available(self) -> bool:
         return self._agent_class is not None
+
+    @property
+    def cli_available(self) -> bool:
+        return self._cli_path is not None
+
+    @property
+    def available(self) -> bool:
+        return self.python_api_available or self.cli_available
+
+    @property
+    def mode(self) -> str:
+        if self.python_api_available:
+            return "python_api"
+        if self.cli_available:
+            return "cli"
+        return "simulator"
+
+    def issues(self, paths: HermesPaths) -> list[str]:
+        issues: list[str] = []
+        if self._python_error:
+            issues.append(f"Python API import failed: {self._python_error}")
+        if self.cli_available and not self.python_api_available:
+            issues.append("Hermes is currently running through CLI fallback, not the Python API.")
+        if not paths.home.exists():
+            issues.append("Hermes home directory does not exist yet.")
+        elif not (paths.home / ".env").exists():
+            issues.append("~/.hermes/.env is missing; Hermes is relying on external auth or defaults.")
+        return issues
+
+    def _run_cli(self, message: str, session_id: str | None) -> ChatResponse:
+        if not self._cli_path:
+            raise HermesExecutionError(RuntimeError("Hermes CLI is not available."))
+
+        command = [self._cli_path, "chat"]
+        if session_id:
+            command.extend(["--resume", session_id])
+        command.extend(["-q", message])
+
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=int(os.getenv("PIXY_HERMES_TIMEOUT", "300")),
+                check=False,
+            )
+        except Exception as error:
+            raise HermesExecutionError(error) from error
+
+        combined_output = "\n".join(
+            part for part in (completed.stdout, completed.stderr) if part
+        )
+        if completed.returncode != 0:
+            raise HermesExecutionError(
+                RuntimeError(combined_output.strip() or f"Hermes CLI exited with {completed.returncode}.")
+            )
+
+        cleaned_output = ANSI_RE.sub("", combined_output).replace("\r", "\n")
+        cleaned_output = re.sub(r"\n{3,}", "\n\n", cleaned_output)
+
+        response_match = re.findall(
+            r"╭─ ⚕ Hermes .*?╮\n(.*?)\n╰──────────────────────────────────────────────────────────────────────────────╯",
+            cleaned_output,
+            flags=re.DOTALL,
+        )
+        reply = response_match[-1].strip() if response_match else ""
+        if not reply:
+            after_query = cleaned_output.split("Query:", maxsplit=1)[-1]
+            reply = after_query.split("Resume this session with:", maxsplit=1)[0].strip()
+        if not reply:
+            reply = "Hermes CLI completed without returning visible output."
+
+        session_match = re.search(r"hermes --resume ([^\s]+)", cleaned_output)
+        actual_session_id = session_match.group(1) if session_match else (session_id or uuid4().hex[:12])
+
+        return ChatResponse(
+            reply=reply,
+            session_id=actual_session_id,
+            mode="hermes_cli",
+            warnings=["Hermes is running through CLI fallback instead of the Python API."],
+            generated_at=now_iso(),
+        )
 
     def chat(self, message: str, session_id: str | None) -> ChatResponse:
         request_session_id = session_id or uuid4().hex[:12]
+
+        if self.python_api_available:
+            try:
+                agent = self._agent_class(session_id=request_session_id, quiet_mode=True)
+                reply = agent.chat(message)
+            except Exception as error:
+                raise HermesExecutionError(error) from error
+
+            response_text = reply.strip() if isinstance(reply, str) else ""
+            if not response_text:
+                response_text = "Hermes completed without returning visible output."
+
+            return ChatResponse(
+                reply=response_text,
+                session_id=getattr(agent, "session_id", request_session_id),
+                mode="hermes",
+                generated_at=now_iso(),
+            )
+
+        if self.cli_available:
+            return self._run_cli(message, session_id)
 
         if not self.available:
             return ChatResponse(
@@ -213,23 +331,7 @@ class HermesRuntime:
                 warnings=["Hermes Agent import failed. Returning a simulator response."],
                 generated_at=now_iso(),
             )
-
-        try:
-            agent = self._agent_class(session_id=request_session_id, quiet_mode=True)
-            reply = agent.chat(message)
-        except Exception as error:
-            raise HermesExecutionError(error) from error
-
-        response_text = reply.strip() if isinstance(reply, str) else ""
-        if not response_text:
-            response_text = "Hermes completed without returning visible output."
-
-        return ChatResponse(
-            reply=response_text,
-            session_id=getattr(agent, "session_id", request_session_id),
-            mode="hermes",
-            generated_at=now_iso(),
-        )
+        raise HermesExecutionError(RuntimeError("Hermes runtime resolution failed."))
 
 
 runtime = HermesRuntime()
@@ -347,11 +449,17 @@ def create_app() -> FastAPI:
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         paths = resolve_paths()
+        memory_path = resolve_memory_path(paths)
         return HealthResponse(
             status="ok",
             hermes_available=runtime.available,
+            runtime_mode=runtime.mode,
+            python_api_available=runtime.python_api_available,
+            cli_available=runtime.cli_available,
             hermes_home=str(paths.home),
-            memory_path=str(resolve_memory_path(paths)) if resolve_memory_path(paths) else None,
+            hermes_home_exists=paths.home.exists(),
+            memory_path=str(memory_path) if memory_path else None,
+            issues=runtime.issues(paths),
         )
 
     @app.post("/chat", response_model=ChatResponse)
