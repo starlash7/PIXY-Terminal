@@ -95,3 +95,67 @@ Apply the result primarily to:
 - `frontend/components/chat-workspace.tsx`
 - `frontend/components/app-shell.tsx`
 - `frontend/app/globals.css`
+
+## 10-minute build order
+
+If you are new to canvas tools, do not start with polish. Build the screen in this order.
+
+### Minute 0-2: create the big boxes
+
+- Create one desktop screen frame
+- Create one mobile screen frame next to it
+- Add a header frame at the top
+- Add one main content frame below it
+- In desktop, split the main content into:
+  - left conversation area
+  - right intelligence rail
+
+### Minute 2-4: place the core chat structure
+
+- In the left conversation area, add:
+  - runtime/session strip
+  - transcript frame
+  - composer frame
+- In the right rail, stack:
+  - warning card
+  - diagnostics card
+  - memory card
+  - recent sessions card
+
+### Minute 4-6: add text placeholders
+
+- Put real labels on every block
+- Use simple text first:
+  - PIXY TERMINAL
+  - Live Hermes CLI
+  - Conversation
+  - Session
+  - Prompt
+  - Runtime warning
+  - Runtime diagnostics
+  - Memory layer
+  - Recent sessions
+
+### Minute 6-8: shape the hierarchy
+
+- Make the chat panel clearly dominant
+- Make the right rail narrower and stacked
+- Give cards consistent padding and corner radius
+- Make assistant messages feel more structured than user messages
+- Make the composer feel like a strong command input, not a weak form field
+
+### Minute 8-10: do the first polish pass
+
+- Apply the dark graphite base
+- Add mint/teal accent color
+- Add amber warning accent
+- Add subtle surface contrast between page, panel, and card
+- Check the mobile frame and stack the right rail below the chat area
+
+## Beginner rule
+
+If you get stuck, do not redesign the whole page. Only ask:
+
+1. What is the biggest frame here?
+2. What are the child frames inside it?
+3. Which card should the eye see first?
