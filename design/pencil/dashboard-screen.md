@@ -37,6 +37,18 @@ This screen is the proof layer. It turns hidden Hermes state into visible metric
 - Demo anchors remain easy to scan
 - Memory excerpt does not become a giant wall of text
 
+## Presentation beat
+
+Narration line:
+
+- "The dashboard is the proof layer: memory, session continuity, skill growth, and runtime path in one pass."
+
+State treatments:
+
+- Loading: stat cards should shimmer in place so the layout still reads immediately
+- Error: preserve a strong headline and one retry action
+- Empty: if memory or session data is sparse, keep the section shells and explain what will populate there later
+
 ## Pencil.dev prompt
 
 Design a dark, high-end dashboard screen for "PIXY TERMINAL", an AI terminal product built on top of Hermes Agent.

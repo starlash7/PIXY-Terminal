@@ -38,6 +38,18 @@ This is the clearest product differentiator. It shows that Hermes is not statele
 - Card layout becomes single-column or compact two-column depending on width
 - Side panels stack after the grid
 
+## Presentation beat
+
+Narration line:
+
+- "This page proves the agent is accumulating reusable capability, not restarting from zero every session."
+
+State treatments:
+
+- Loading: keep search near the top and show collectible-card placeholders
+- Error: leave the shell framing intact and explain that the catalog failed to load
+- Empty: the empty state must still sell the value of future learned skills, not just say "nothing here"
+
 ## Pencil.dev prompt
 
 Design a dark responsive web screen for the "PIXY TERMINAL" skills library.

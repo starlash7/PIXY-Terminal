@@ -45,6 +45,18 @@ This is the hero screen for the demo. It proves Hermes is usable in a browser an
 - Right rail becomes stacked cards after the transcript
 - Submit CTA remains obvious and thumb-reachable
 
+## Presentation beat
+
+Narration line:
+
+- "This is the command center: live prompt on the left, persistent context on the right."
+
+State treatments:
+
+- Loading: keep transcript hierarchy visible with message-shaped skeletons
+- Error: show a recoverable shell-level message, then keep the composer visible if possible
+- Empty: initial assistant seed message should explain what PIXY is for before any user message exists
+
 ## Pencil.dev prompt
 
 Design a dark, premium web app screen for an AI product called "PIXY TERMINAL".
