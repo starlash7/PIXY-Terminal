@@ -1,15 +1,24 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
+import { Inter, JetBrains_Mono, Silkscreen } from "next/font/google";
+
+import { WorkspaceFrame } from "@/components/workspace-frame";
+
 import "./globals.css";
 
-const displayFont = Space_Grotesk({
-  variable: "--font-display",
+const sansFont = Inter({
+  variable: "--font-app-sans",
   subsets: ["latin"],
 });
 
 const monoFont = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
   subsets: ["latin"],
+});
+
+const pixelFont = Silkscreen({
+  variable: "--font-pixel",
+  subsets: ["latin"],
+  weight: ["400", "700"],
 });
 
 export const metadata: Metadata = {
@@ -24,8 +33,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${displayFont.variable} ${monoFont.variable} antialiased`}>
-        <div className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">{children}</div>
+      <body
+        className={`${sansFont.variable} ${monoFont.variable} ${pixelFont.variable} antialiased`}
+      >
+        <WorkspaceFrame>{children}</WorkspaceFrame>
       </body>
     </html>
   );
