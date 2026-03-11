@@ -2,14 +2,18 @@ export type ApiErrorPayload = {
   error: {
     code: string;
     message: string;
+    request_id?: string;
     details?: Record<string, unknown>;
   };
 };
 
+export type RuntimeMode = "python_api" | "cli" | "simulator";
+
 export type ChatResponse = {
   reply: string;
   session_id: string;
-  mode: string;
+  mode: RuntimeMode;
+  request_id: string;
   warnings: string[];
   generated_at: string;
 };
@@ -50,7 +54,7 @@ export type SessionsResponse = {
 export type HealthResponse = {
   status: string;
   hermes_available: boolean;
-  runtime_mode: string;
+  runtime_mode: RuntimeMode;
   python_api_available: boolean;
   cli_available: boolean;
   hermes_home: string;

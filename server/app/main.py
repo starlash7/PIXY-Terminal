@@ -10,7 +10,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, status
@@ -29,7 +29,7 @@ class ApiError(Exception):
         code: str,
         message: str,
         status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR,
-        details: dict[str, Any] | None = None,
+        details: Optional[dict[str, Any]] = None,
     ) -> None:
         self.code = code
         self.message = message
@@ -58,24 +58,33 @@ class StorageReadError(ApiError):
 
 
 class HermesExecutionError(ApiError):
-    def __init__(self, error: Exception) -> None:
+    def __init__(
+        self,
+        error: Exception,
+        *,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        payload = {"reason": str(error)}
+        if details:
+            payload.update(details)
         super().__init__(
             code="hermes_execution_failed",
             message="Hermes Agent failed to process the message.",
             status_code=status.HTTP_502_BAD_GATEWAY,
-            details={"reason": str(error)},
+            details=payload,
         )
 
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=12000)
-    session_id: str | None = Field(default=None, max_length=120)
+    session_id: Optional[str] = Field(default=None, max_length=120)
 
 
 class ChatResponse(BaseModel):
     reply: str
     session_id: str
     mode: str
+    request_id: str
     warnings: list[str] = Field(default_factory=list)
     generated_at: str
 
@@ -95,7 +104,7 @@ class SkillsResponse(BaseModel):
 
 class MemoryResponse(BaseModel):
     content: str
-    path: str | None
+    path: Optional[str]
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -121,7 +130,7 @@ class HealthResponse(BaseModel):
     cli_available: bool
     hermes_home: str
     hermes_home_exists: bool
-    memory_path: str | None
+    memory_path: Optional[str]
     issues: list[str] = Field(default_factory=list)
 
 
@@ -136,6 +145,13 @@ class HermesPaths:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def request_id_from(request: Optional[Request]) -> str:
+    if request is None:
+        return uuid4().hex[:12]
+    request_id = getattr(request.state, "request_id", None)
+    return request_id if isinstance(request_id, str) and request_id else uuid4().hex[:12]
 
 
 def resolve_paths() -> HermesPaths:
@@ -153,7 +169,7 @@ def resolve_paths() -> HermesPaths:
     )
 
 
-def resolve_memory_path(paths: HermesPaths) -> Path | None:
+def resolve_memory_path(paths: HermesPaths) -> Optional[Path]:
     for candidate in paths.memory_candidates:
         if candidate.exists():
             return candidate
@@ -188,11 +204,11 @@ def extract_summary(path: Path) -> str:
 
 class HermesRuntime:
     def __init__(self) -> None:
-        self._python_error: str | None = None
+        self._python_error: Optional[str] = None
         self._agent_class = self._load_agent_class()
         self._cli_path = shutil.which(os.getenv("PIXY_HERMES_COMMAND", "hermes"))
 
-    def _load_agent_class(self) -> type[Any] | None:
+    def _load_agent_class(self) -> Optional[type[Any]]:
         candidates = (("run_agent", "AIAgent"), ("hermes.agent", "AIAgent"))
         for module_name, attr_name in candidates:
             try:
@@ -240,7 +256,13 @@ class HermesRuntime:
             issues.append("~/.hermes/.env is missing; Hermes is relying on external auth or defaults.")
         return issues
 
-    def _run_cli(self, message: str, session_id: str | None) -> ChatResponse:
+    def _run_cli(
+        self,
+        message: str,
+        session_id: Optional[str],
+        *,
+        request_id: str,
+    ) -> ChatResponse:
         if not self._cli_path:
             raise HermesExecutionError(RuntimeError("Hermes CLI is not available."))
 
@@ -258,14 +280,26 @@ class HermesRuntime:
                 check=False,
             )
         except Exception as error:
-            raise HermesExecutionError(error) from error
+            raise HermesExecutionError(
+                error,
+                details={"command": command},
+            ) from error
 
         combined_output = "\n".join(
             part for part in (completed.stdout, completed.stderr) if part
         )
         if completed.returncode != 0:
+            error_details = {
+                "command": command,
+                "exit_code": completed.returncode,
+            }
+            if completed.stdout.strip():
+                error_details["stdout_preview"] = completed.stdout.strip()[:400]
+            if completed.stderr.strip():
+                error_details["stderr_preview"] = completed.stderr.strip()[:400]
             raise HermesExecutionError(
-                RuntimeError(combined_output.strip() or f"Hermes CLI exited with {completed.returncode}.")
+                RuntimeError(combined_output.strip() or f"Hermes CLI exited with {completed.returncode}."),
+                details=error_details,
             )
 
         cleaned_output = ANSI_RE.sub("", combined_output).replace("\r", "\n")
@@ -289,12 +323,19 @@ class HermesRuntime:
         return ChatResponse(
             reply=reply,
             session_id=actual_session_id,
-            mode="hermes_cli",
+            mode="cli",
+            request_id=request_id,
             warnings=["Hermes is running through CLI fallback instead of the Python API."],
             generated_at=now_iso(),
         )
 
-    def chat(self, message: str, session_id: str | None) -> ChatResponse:
+    def chat(
+        self,
+        message: str,
+        session_id: Optional[str],
+        *,
+        request_id: str,
+    ) -> ChatResponse:
         request_session_id = session_id or uuid4().hex[:12]
 
         if self.python_api_available:
@@ -311,12 +352,13 @@ class HermesRuntime:
             return ChatResponse(
                 reply=response_text,
                 session_id=getattr(agent, "session_id", request_session_id),
-                mode="hermes",
+                mode="python_api",
+                request_id=request_id,
                 generated_at=now_iso(),
             )
 
         if self.cli_available:
-            return self._run_cli(message, session_id)
+            return self._run_cli(message, session_id, request_id=request_id)
 
         if not self.available:
             return ChatResponse(
@@ -328,6 +370,7 @@ class HermesRuntime:
                 ),
                 session_id=request_session_id,
                 mode="simulator",
+                request_id=request_id,
                 warnings=["Hermes Agent import failed. Returning a simulator response."],
                 generated_at=now_iso(),
             )
@@ -433,17 +476,45 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def attach_request_id(request: Request, call_next):
+        request_id = uuid4().hex[:12]
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["x-pixy-request-id"] = request_id
+        return response
+
     @app.exception_handler(ApiError)
-    async def api_error_handler(_: Request, error: ApiError) -> JSONResponse:
+    async def api_error_handler(request: Request, error: ApiError) -> JSONResponse:
+        request_id = request_id_from(request)
         return JSONResponse(
             status_code=error.status_code,
             content={
                 "error": {
                     "code": error.code,
                     "message": error.message,
+                    "request_id": request_id,
                     "details": error.details,
                 }
             },
+            headers={"x-pixy-request-id": request_id},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, error: Exception) -> JSONResponse:
+        request_id = request_id_from(request)
+        logger.exception("Unhandled server error", extra={"request_id": request_id})
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": {
+                    "code": "internal_server_error",
+                    "message": "PIXY hit an unexpected server error.",
+                    "request_id": request_id,
+                    "details": {"reason": str(error)},
+                }
+            },
+            headers={"x-pixy-request-id": request_id},
         )
 
     @app.get("/health", response_model=HealthResponse)
@@ -463,10 +534,14 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/chat", response_model=ChatResponse)
-    async def chat(payload: ChatRequest) -> ChatResponse:
+    async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         if not payload.message.strip():
             raise InvalidMessageError()
-        return runtime.chat(payload.message.strip(), payload.session_id)
+        return runtime.chat(
+            payload.message.strip(),
+            payload.session_id,
+            request_id=request_id_from(request),
+        )
 
     @app.get("/skills", response_model=SkillsResponse)
     async def skills() -> SkillsResponse:

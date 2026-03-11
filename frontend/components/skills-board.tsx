@@ -4,6 +4,7 @@ import { useDeferredValue, useEffect, useEffectEvent, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { getJson } from "@/lib/client";
+import { annotateSkills } from "@/lib/insights";
 import type { MemoryResponse, SessionCard, SessionsResponse, SkillCard, SkillsResponse } from "@/lib/types";
 
 function formatDate(value: string): string {
@@ -43,8 +44,12 @@ export function SkillsBoard() {
     });
   }, []);
 
-  const filteredSkills = skills.filter((skill) => {
-    const haystack = `${skill.title} ${skill.summary}`.toLowerCase();
+  const skillInsights = annotateSkills(skills, memory?.content ?? "", sessions);
+  const connectedSkills = skillInsights.filter((item) => item.score > 0);
+  const memoryLinkedSkills = skillInsights.filter((item) => item.memoryHits > 0);
+
+  const filteredSkills = skillInsights.filter((item) => {
+    const haystack = `${item.skill.title} ${item.skill.summary} ${item.matchedTerms.join(" ")}`.toLowerCase();
     return haystack.includes(deferredQuery.toLowerCase());
   });
 
@@ -64,6 +69,17 @@ export function SkillsBoard() {
               <h2 className="mt-3 text-2xl font-semibold text-white">
                 Searchable growth log
               </h2>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--muted)]">
+                <span className="rounded-full border border-white/10 px-3 py-1">
+                  {skills.length} tracked
+                </span>
+                <span className="rounded-full border border-[var(--line)] bg-[rgba(159,255,208,0.08)] px-3 py-1 text-[var(--accent)]">
+                  {connectedSkills.length} linked
+                </span>
+                <span className="rounded-full border border-white/10 px-3 py-1">
+                  {memoryLinkedSkills.length} memory-linked
+                </span>
+              </div>
             </div>
             <input
               value={query}
@@ -75,26 +91,54 @@ export function SkillsBoard() {
 
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             {filteredSkills.length > 0 ? (
-              filteredSkills.map((skill) => (
+              filteredSkills.map((item) => (
                 <article
-                  key={skill.id}
+                  key={item.skill.id}
                   className="rounded-[1.4rem] border border-white/8 bg-black/20 p-4 transition hover:border-[var(--line)] hover:bg-black/28"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-medium text-white">{skill.title}</p>
+                      <p className="text-sm font-medium text-white">{item.skill.title}</p>
                       <p className="mt-2 text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
-                        {skill.id}
+                        {item.skill.id}
                       </p>
                     </div>
                     <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-[var(--muted)]">
-                      {formatDate(skill.last_updated)}
+                      {formatDate(item.skill.last_updated)}
                     </span>
                   </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-[var(--muted)]">
+                      {item.freshnessLabel}
+                    </span>
+                    {item.memoryHits > 0 ? (
+                      <span className="rounded-full border border-[var(--line)] bg-[rgba(159,255,208,0.08)] px-3 py-1 text-xs uppercase tracking-[0.18em] text-[var(--accent)]">
+                        Memory x{item.memoryHits}
+                      </span>
+                    ) : null}
+                    {item.sessionHits > 0 ? (
+                      <span className="rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-white/80">
+                        Sessions x{item.sessionHits}
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
-                    {skill.summary}
+                    {item.skill.summary}
                   </p>
-                  <p className="mt-4 text-xs leading-6 text-white/60">{skill.path}</p>
+                  <p className="mt-4 text-sm leading-7 text-white/90">{item.signal}</p>
+                  {item.matchedTerms.length > 0 ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {item.matchedTerms.map((term) => (
+                        <span
+                          key={`${item.skill.id}-${term}`}
+                          className="rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-[var(--muted)]"
+                        >
+                          {term}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="mt-4 text-xs leading-6 text-white/60">{item.skill.path}</p>
                 </article>
               ))
             ) : (
@@ -110,11 +154,19 @@ export function SkillsBoard() {
         <aside className="flex flex-col gap-4">
           <section className="glass-panel rounded-[1.5rem] p-4">
             <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">
-              Why this page matters
+              Visibility signal
             </p>
             <div className="mt-4 space-y-3 text-sm leading-7 text-white/90">
-              <p>Skill visibility is the clearest difference between a stateless chatbot and a persistent agent.</p>
-              <p>For the demo, this page is the proof that Hermes learns instead of restarting from zero.</p>
+              <p>
+                {connectedSkills.length > 0
+                  ? `${connectedSkills.length} skills already connect back to saved memory or recent sessions.`
+                  : "Skill visibility is ready, but the connection graph will strengthen as Hermes writes more context."}
+              </p>
+              <p>
+                {memoryLinkedSkills.length > 0
+                  ? `${memoryLinkedSkills.length} skills echo persisted memory terms instead of acting like isolated markdown files.`
+                  : "For the demo, this page proves Hermes learns even before memory overlap becomes strong."}
+              </p>
             </div>
           </section>
 
