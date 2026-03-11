@@ -18,14 +18,6 @@ type Message = {
 type AvatarMood = "idle" | "thinking" | "smile" | "caution" | "glitch";
 type WindowMode = "windowed" | "maximized" | "minimized";
 
-const ASCII_FRAMES: Record<AvatarMood, string> = {
-  idle: String.raw`[idle]  (\^_^/)  sync ok`,
-  thinking: String.raw`[think] ( -_-)   indexing...`,
-  smile: String.raw`[reply] (\^_^/)  live`,
-  caution: String.raw`[warn]  ( o_o )  simulator`,
-  glitch: String.raw`[error] ( x_x )  retry`,
-};
-
 const MOOD_COPY: Record<AvatarMood, string> = {
   idle: "link stable. waiting for the next prompt.",
   thinking: "thinking through memory, tools, and recent turns.",
@@ -36,23 +28,6 @@ const MOOD_COPY: Record<AvatarMood, string> = {
 
 async function loadHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>("/api/health");
-}
-
-function truncateLine(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, maxLength - 1)}…`;
-}
-
-function latestAssistantLine(messages: Message[]): string | null {
-  const assistantMessage = [...messages].reverse().find((message) => message.role === "assistant");
-  if (!assistantMessage) {
-    return null;
-  }
-
-  return assistantMessage.content.split("\n").find(Boolean) ?? assistantMessage.content;
 }
 
 function formatTime(timestamp: number): string {
@@ -69,6 +44,48 @@ function formatDuration(durationMs: number): string {
   const seconds = totalSeconds % 60;
 
   return `${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function RuntimePulseIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-5 w-5 text-[var(--accent-green)]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M2 12h4l2.2-6.2L12 18l2.7-8 2.1 4H22" />
+    </svg>
+  );
+}
+
+function MemoryLayerIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="h-5 w-5 text-[var(--accent-green)]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M11.25 5.1c-.7-1-1.9-1.6-3.2-1.6-2.1 0-3.8 1.7-3.8 3.8 0 .7.2 1.4.5 2A3.95 3.95 0 0 0 4 16.3a4 4 0 0 0 5 3.7c.7.5 1.5.8 2.25.8" />
+      <path d="M12.75 5.1c.7-1 1.9-1.6 3.2-1.6 2.1 0 3.8 1.7 3.8 3.8 0 .7-.2 1.4-.5 2a3.95 3.95 0 0 1 .75 7 4 4 0 0 1-5 3.7c-.7.5-1.5.8-2.25.8" />
+      <path d="M12 4.8v14.4" />
+      <path d="M8.2 7.8c1 .1 1.8 1 1.8 2.1" />
+      <path d="M8.2 11.7c1 .1 1.8 1 1.8 2.1" />
+      <path d="M8.2 15.6c.9 0 1.7-.6 1.9-1.5" />
+      <path d="M15.8 7.8c-1 .1-1.8 1-1.8 2.1" />
+      <path d="M15.8 11.7c-1 .1-1.8 1-1.8 2.1" />
+      <path d="M15.8 15.6c-.9 0-1.7-.6-1.9-1.5" />
+    </svg>
+  );
 }
 
 export function ChatWorkspace() {
@@ -105,7 +122,6 @@ export function ChatWorkspace() {
   }, [messages, isSending]);
 
   const simulatorMode = health?.runtime_mode === "simulator";
-  const connected = Boolean(health?.hermes_available && !simulatorMode);
 
   const mood: AvatarMood = useMemo(() => {
     if (error) {
@@ -191,13 +207,6 @@ export function ChatWorkspace() {
     }
   }
 
-  const assistantLine = latestAssistantLine(messages);
-  const bubbleCopy = truncateLine(
-    isSending || isPending ? MOOD_COPY.thinking : assistantLine ?? MOOD_COPY[mood],
-    72,
-  );
-  const activeFrame = ASCII_FRAMES[mood];
-
   const startedAt = messages[0]?.createdAt ?? Date.now();
   const lastEventAt = messages[messages.length - 1]?.createdAt ?? startedAt;
   const conversationDuration = formatDuration(lastEventAt - startedAt);
@@ -221,7 +230,6 @@ export function ChatWorkspace() {
     windowMode === "maximized"
       ? "rounded-none border-x-0 border-y-0"
       : "rounded-[28px]";
-
   return (
     <div className="flex min-h-screen flex-col bg-[var(--bg-primary)]">
       <div className={`min-h-0 flex-1 ${pagePaddingClass}`}>
@@ -232,30 +240,54 @@ export function ChatWorkspace() {
             <div className="flex items-center justify-between border-b border-[var(--border-default)] px-5 py-4">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    aria-label="Minimize window"
-                    onClick={() => setWindowMode("minimized")}
-                    className="inline-flex h-3 w-3 items-center justify-center rounded-full bg-[#fb5f57] text-[8px] font-bold text-black transition-transform duration-150 hover:scale-110"
-                  >
-                    -
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Window mode"
-                    onClick={() => setWindowMode("windowed")}
-                    className="inline-flex h-3 w-3 items-center justify-center rounded-full bg-[#febc2e] text-[7px] font-bold text-black transition-transform duration-150 hover:scale-110"
-                  >
-                    □
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Maximize window"
-                    onClick={() => setWindowMode("maximized")}
-                    className="inline-flex h-3 w-3 items-center justify-center rounded-full bg-[var(--accent-purple)] text-[8px] font-bold text-black transition-transform duration-150 hover:scale-110"
-                  >
-                    +
-                  </button>
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      aria-label="Minimize window"
+                      onClick={() => setWindowMode("minimized")}
+                      className={`h-[14px] w-[14px] rounded-full bg-[#ff5f57] transition-transform duration-150 ${
+                        windowMode === "minimized"
+                          ? "scale-110 ring-2 ring-white/18"
+                          : "hover:scale-110"
+                      }`}
+                    >
+                      <span className="flex h-full w-full items-center justify-center text-[10px] font-bold leading-none text-black opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                        x
+                      </span>
+                    </button>
+                  </div>
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      aria-label="Window mode"
+                      onClick={() => setWindowMode("windowed")}
+                      className={`h-[14px] w-[14px] rounded-full bg-[#febc2e] transition-transform duration-150 ${
+                        windowMode === "windowed"
+                          ? "scale-110 ring-2 ring-white/18"
+                          : "hover:scale-110"
+                      }`}
+                    >
+                      <span className="flex h-full w-full items-center justify-center text-[11px] font-bold leading-none text-black opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                        _
+                      </span>
+                    </button>
+                  </div>
+                  <div className="group relative">
+                    <button
+                      type="button"
+                      aria-label="Maximize window"
+                      onClick={() => setWindowMode("maximized")}
+                      className={`h-[14px] w-[14px] rounded-full bg-[#28c840] transition-transform duration-150 ${
+                        windowMode === "maximized"
+                          ? "scale-110 ring-2 ring-white/18"
+                          : "hover:scale-110"
+                      }`}
+                    >
+                      <span className="flex h-full w-full items-center justify-center text-[10px] font-bold leading-none text-black opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                        +
+                      </span>
+                    </button>
+                  </div>
                 </div>
                 <span className="font-mono text-[12px] text-[var(--text-muted)]">~/pixy/chat</span>
               </div>
@@ -288,31 +320,8 @@ export function ChatWorkspace() {
               <div className="relative flex h-[calc(100%-57px)] flex-col">
               <div className="relative min-h-0 flex-1 overflow-hidden">
                 <div className="pointer-events-none absolute bottom-0 right-8 z-10 w-[20rem]">
-                  <div className="depth-panel absolute -left-44 top-8 w-80 overflow-visible rounded-[24px] px-5 py-4 backdrop-blur">
-                    <span
-                      className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
-                      style={{ fontFamily: "var(--font-pixel)" }}
-                    >
-                      pixy.core
-                    </span>
-                    <p className="mt-2 text-sm leading-6 text-[var(--text-primary)]">{bubbleCopy}</p>
-                    <span className="absolute -bottom-1 left-12 h-3 w-3 rotate-45 border-r border-b border-[rgba(168,85,247,0.24)] bg-[rgba(10,10,10,0.82)]" />
-                  </div>
-
-                  <div className="depth-panel absolute left-3 top-36 rounded-[18px] px-3 py-3 backdrop-blur">
-                    <p className="mb-2 text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
-                      conversation partner
-                    </p>
-                    <pre className="ascii-signal mono-copy whitespace-pre text-[10px] leading-5 text-[rgba(148,163,184,0.92)]">
-                      {activeFrame}
-                    </pre>
-                  </div>
-
                   <div className="depth-tilt relative h-[25rem]">
-                    <div className="absolute bottom-10 right-10 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.34),transparent_66%)] blur-3xl" />
-                    <div className="absolute bottom-16 right-14 h-36 w-36 rounded-full border border-[rgba(168,85,247,0.18)]" />
                     <div className="core-frame absolute bottom-2 right-0 h-[18rem] w-[18rem]">
-                      <div className="absolute inset-[10%] rounded-full border border-[rgba(255,255,255,0.08)]" />
                       <Image
                         src="/api/character-image"
                         alt="Pixy portrait"
@@ -322,7 +331,6 @@ export function ChatWorkspace() {
                         unoptimized
                         className="relative z-10 h-full w-full select-none object-cover object-center"
                       />
-                      <div className="absolute inset-0 z-20 rounded-full bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.18),transparent_28%),radial-gradient(circle_at_bottom,rgba(168,85,247,0.18),transparent_40%)]" />
                     </div>
                   </div>
                 </div>
@@ -403,9 +411,9 @@ export function ChatWorkspace() {
                 ) : null}
 
                 <form ref={formRef} onSubmit={handleSubmit} className="pixel-frame depth-panel rounded-[20px] p-3">
-                  <div className="flex items-start gap-3">
+                  <div className="flex items-end gap-3">
                     <span
-                      className="pt-3 text-[12px] uppercase tracking-[0.16em] text-[var(--accent-purple)]"
+                      className="pb-3 text-[16px] uppercase tracking-[0.12em] text-[var(--accent-purple)]"
                       style={{ fontFamily: "var(--font-pixel)" }}
                     >
                       $
@@ -426,7 +434,7 @@ export function ChatWorkspace() {
                     <button
                       type="submit"
                       disabled={isSending || !draft.trim()}
-                      className="inline-flex h-10 items-center gap-2 rounded-lg border border-[rgba(168,85,247,0.28)] bg-[rgba(168,85,247,0.92)] px-4 text-sm font-semibold text-black transition-all duration-150 hover:brightness-110 disabled:cursor-not-allowed disabled:border-[var(--border-default)] disabled:bg-[var(--bg-surface)] disabled:text-[var(--text-muted)]"
+                      className="mb-1 inline-flex h-10 items-center gap-2 rounded-lg border border-[rgba(168,85,247,0.28)] bg-[rgba(168,85,247,0.92)] px-4 text-sm font-semibold text-black transition-all duration-150 hover:brightness-110 disabled:cursor-not-allowed disabled:border-[var(--border-default)] disabled:bg-[var(--bg-surface)] disabled:text-[var(--text-muted)]"
                     >
                       <span
                         className="text-[11px] uppercase tracking-[0.18em]"
@@ -453,7 +461,6 @@ export function ChatWorkspace() {
                 >
                   talk time
                 </span>
-                <span className="font-mono text-[12px] text-[var(--text-muted)]">total session</span>
               </div>
               <div className="mt-5">
                 <p
@@ -485,74 +492,82 @@ export function ChatWorkspace() {
               </div>
             </article>
 
-            <article className="pixel-frame depth-panel rounded-[22px] px-5 py-4">
+            <article className="pixel-frame rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
               <div className="flex items-center justify-between gap-3">
-                <span
-                  className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  status window
-                </span>
-                <span className="font-mono text-[12px] text-[var(--text-muted)]">{mood}</span>
+                <div className="flex items-center gap-3">
+                  <RuntimePulseIcon />
+                  <span
+                    className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                    style={{ fontFamily: "var(--font-pixel)" }}
+                  >
+                    {"// RUNTIME_DIAGNOSTICS"}
+                  </span>
+                </div>
               </div>
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">Hermes link</span>
-                  <span className={connected ? "text-[rgba(196,181,253,0.95)]" : "text-[var(--accent-red)]"}>
-                    {connected ? "online" : "offline"}
+              <div className="mt-5 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
+                    Inference latency
+                  </span>
+                  <span className="font-mono text-[15px] font-semibold text-[var(--accent-green)]">
+                    340ms
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">Runtime</span>
-                  <span className={simulatorMode ? "text-[var(--accent-amber)]" : "text-[var(--text-primary)]"}>
-                    {simulatorMode ? "simulator" : "live"}
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
+                    Context usage
+                  </span>
+                  <span className="font-mono text-[15px] font-semibold text-[var(--accent-amber)]">
+                    78%
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">Warnings</span>
-                  <span className="font-mono text-[var(--text-primary)]">{warnings.length}</span>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
+                    Active threads
+                  </span>
+                  <span className="font-mono text-[15px] font-semibold text-[var(--text-primary)]">
+                    14
+                  </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">Session</span>
-                  <span className="font-mono text-[var(--text-primary)]">{sessionId ?? "new-session"}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">Memory</span>
-                  <span className="text-[rgba(196,181,253,0.95)]">mounted</span>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
+                    Memory heap
+                  </span>
+                  <span className="font-mono text-[15px] font-semibold text-[var(--text-primary)]">
+                    6.2 / 16 GB
+                  </span>
                 </div>
               </div>
             </article>
 
-            <article className="pixel-frame depth-panel rounded-[22px] px-5 py-4">
+            <article className="pixel-frame rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
               <div className="flex items-center justify-between gap-3">
-                <span
-                  className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  add-on bay
-                </span>
-                <span className="font-mono text-[12px] text-[var(--text-muted)]">live hooks</span>
-              </div>
-              <div className="mt-4 space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">skill.invoke</span>
-                  <span className="text-[rgba(196,181,253,0.95)]">armed</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">memory.write</span>
-                  <span className="text-[rgba(196,181,253,0.95)]">ready</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[var(--text-muted)]">session.resume</span>
-                  <span className={sessionId ? "text-[rgba(196,181,253,0.95)]" : "text-[var(--text-muted)]"}>
-                    {sessionId ? "active" : "standby"}
+                <div className="flex items-center gap-3">
+                  <MemoryLayerIcon />
+                  <span
+                    className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                    style={{ fontFamily: "var(--font-pixel)" }}
+                  >
+                    {"// MEMORY_LAYER"}
                   </span>
                 </div>
+                <span
+                  className="rounded-[0.45rem] border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.12)] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--accent-green)]"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  active
+                </span>
               </div>
-              <div className="mt-4 border-t border-[var(--border-default)] pt-3">
-                <p className="font-mono text-[12px] leading-6 text-[var(--text-muted)]">
-                  current.mood::{mood}
-                </p>
+              <div className="mt-5">
+                <div className="rounded-[1rem] border border-[rgba(34,197,94,0.14)] bg-[rgba(34,197,94,0.05)] px-4 py-4">
+                  <div className="flex items-start gap-4">
+                    <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[var(--accent-green)]" />
+                    <p className="text-[15px] leading-8 text-[rgba(226,232,240,0.74)]">
+                      User prefers concise diagnostic format with bullet summaries and explicit
+                      numeric thresholds.
+                    </p>
+                  </div>
+                </div>
               </div>
             </article>
             </section>
