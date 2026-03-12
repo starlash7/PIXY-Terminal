@@ -1,11 +1,12 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
+import { AgentPresence } from "@/components/agent-presence";
 import { MarkdownBlock } from "@/components/markdown-block";
 import { getJson, postJson } from "@/lib/client";
+import { buildThoughtCue, type AgentState, type ThoughtCue } from "@/lib/agent-presence";
 import type { ChatResponse, HealthResponse } from "@/lib/types";
 
 type Message = {
@@ -15,19 +16,17 @@ type Message = {
   createdAt: number;
 };
 
-type AvatarMood = "idle" | "thinking" | "smile" | "caution" | "glitch";
 type WindowMode = "windowed" | "maximized" | "minimized";
-
-const MOOD_COPY: Record<AvatarMood, string> = {
-  idle: "link stable. waiting for the next prompt.",
-  thinking: "thinking through memory, tools, and recent turns.",
-  smile: "response ready. keeping the thread alive.",
-  caution: "simulator path active. replies may be mocked.",
-  glitch: "signal noise detected. inspect health or retry.",
-};
 
 async function loadHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>("/api/health");
+}
+
+function clearTimeoutRef(timeoutRef: React.MutableRefObject<number | null>) {
+  if (timeoutRef.current !== null) {
+    window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  }
 }
 
 function formatTime(timestamp: number): string {
@@ -97,9 +96,15 @@ export function ChatWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [windowMode, setWindowMode] = useState<WindowMode>("windowed");
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [thoughtCue, setThoughtCue] = useState<ThoughtCue | null>(null);
   const [isPending, startTransition] = useTransition();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const thoughtTimeoutRef = useRef<number | null>(null);
+  const thinkingTimeoutRef = useRef<number | null>(null);
+  const settleTimeoutRef = useRef<number | null>(null);
+  const lastThoughtTextRef = useRef<string | null>(null);
 
   async function refreshHealth() {
     const healthData = await loadHealth();
@@ -123,21 +128,41 @@ export function ChatWorkspace() {
 
   const simulatorMode = health?.runtime_mode === "simulator";
 
-  const mood: AvatarMood = useMemo(() => {
-    if (error) {
-      return "glitch";
+  useEffect(() => {
+    return () => {
+      clearTimeoutRef(thoughtTimeoutRef);
+      clearTimeoutRef(thinkingTimeoutRef);
+      clearTimeoutRef(settleTimeoutRef);
+    };
+  }, []);
+
+  function showThought(nextState: AgentState) {
+    setAgentState(nextState);
+
+    const cue = buildThoughtCue(nextState, lastThoughtTextRef.current);
+    clearTimeoutRef(thoughtTimeoutRef);
+
+    if (!cue) {
+      setThoughtCue(null);
+      return;
     }
-    if (isSending || isPending) {
-      return "thinking";
-    }
-    if (simulatorMode || warnings.length > 0) {
-      return "caution";
-    }
-    if (messages.length > 1) {
-      return "smile";
-    }
-    return "idle";
-  }, [error, isSending, isPending, simulatorMode, warnings.length, messages.length]);
+
+    lastThoughtTextRef.current = cue.text;
+    setThoughtCue(cue);
+    thoughtTimeoutRef.current = window.setTimeout(() => {
+      setThoughtCue((current) => (current?.id === cue.id ? null : current));
+      thoughtTimeoutRef.current = null;
+    }, cue.durationMs);
+  }
+
+  function settlePresence(nextState: AgentState = "idle") {
+    clearTimeoutRef(settleTimeoutRef);
+    settleTimeoutRef.current = window.setTimeout(() => {
+      setAgentState(nextState);
+      setThoughtCue(null);
+      settleTimeoutRef.current = null;
+    }, 1500);
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -158,8 +183,15 @@ export function ChatWorkspace() {
     setDraft("");
     setError(null);
     setWarnings([]);
+    clearTimeoutRef(settleTimeoutRef);
+    clearTimeoutRef(thinkingTimeoutRef);
     setIsSending(true);
     setMessages((current) => [...current, userMessage]);
+    showThought("listening");
+    thinkingTimeoutRef.current = window.setTimeout(() => {
+      showThought("thinking");
+      thinkingTimeoutRef.current = null;
+    }, 650);
 
     try {
       const response = await postJson<ChatResponse>("/api/chat", {
@@ -180,6 +212,9 @@ export function ChatWorkspace() {
         setSessionId(response.session_id);
         setWarnings(response.warnings);
       });
+      clearTimeoutRef(thinkingTimeoutRef);
+      showThought(response.warnings.length > 0 ? "warning" : "responding");
+      settlePresence();
 
       void refreshHealth().catch(() => {
         setHealth(null);
@@ -202,6 +237,9 @@ export function ChatWorkspace() {
         ]);
         setError(message);
       });
+      clearTimeoutRef(thinkingTimeoutRef);
+      showThought("warning");
+      settlePresence();
     } finally {
       setIsSending(false);
     }
@@ -324,135 +362,118 @@ export function ChatWorkspace() {
 
             {showWindowBody ? (
               <div className="relative flex h-[calc(100%-57px)] flex-col">
-              <div className="relative min-h-0 flex-1 overflow-hidden">
-                <div className="pointer-events-none absolute bottom-0 right-8 z-10 w-[20rem]">
-                  <div className="depth-tilt relative h-[25rem]">
-                    <div className="core-frame absolute bottom-2 right-0 h-[18rem] w-[18rem]">
-                      <Image
-                        src="/api/character-image"
-                        alt="Pixy portrait"
-                        width={512}
-                        height={512}
-                        priority
-                        unoptimized
-                        className="relative z-10 h-full w-full select-none object-cover object-center"
-                      />
-                    </div>
-                  </div>
-                </div>
+                <div className="relative min-h-0 flex-1 overflow-hidden">
+                  <AgentPresence
+                    state={agentState}
+                    thoughtCue={thoughtCue}
+                    messageCount={messages.length}
+                    hasWarning={Boolean(error) || warnings.length > 0}
+                  />
 
-                <div ref={scrollRef} className="relative z-0 h-full overflow-y-auto">
-                  <div className="max-w-[780px] space-y-4 px-6 py-6 pb-10">
-                    <div className="pixel-frame depth-panel rounded-[18px] border-[rgba(168,85,247,0.18)] px-4 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <span
-                          className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
-                          style={{ fontFamily: "var(--font-pixel)" }}
-                        >
-                          pixy.presence
-                        </span>
-                        <span className="text-[12px] text-[var(--text-muted)]">
-                          {MOOD_COPY[mood]}
-                        </span>
+                  <div ref={scrollRef} className="relative z-0 h-full overflow-y-auto">
+                    <div className="px-6 py-6 pb-10 pr-[20rem]">
+                      <div className="max-w-[780px] space-y-4">
+                        {messages.map((message, index) =>
+                          message.role === "user" ? (
+                            <div
+                              key={message.id}
+                              className="animate-chat-entry mono-copy border-l border-[rgba(168,85,247,0.32)] pl-4 text-[13px] text-[var(--text-primary)]"
+                            >
+                              <div className="mb-1 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                                <span>{formatTime(message.createdAt)}</span>
+                                <span>user.prompt</span>
+                              </div>
+                              <p className="whitespace-pre-wrap leading-7">
+                                <span className="mr-2 text-[var(--accent-purple)]">&gt;</span>
+                                {message.content}
+                              </p>
+                            </div>
+                          ) : (
+                            <article
+                              key={message.id}
+                              className="animate-chat-entry pixel-frame depth-panel relative overflow-hidden rounded-[20px] pl-4"
+                            >
+                              <span className="absolute inset-y-0 left-0 w-[3px] bg-[var(--accent-purple)]" />
+                              <div className="p-4">
+                                <div className="mb-3 flex items-center justify-between gap-3 border-b border-[var(--border-default)] pb-3">
+                                  <span
+                                    className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                                    style={{ fontFamily: "var(--font-pixel)" }}
+                                  >
+                                    pixy.voice
+                                  </span>
+                                  <span className="text-[12px] text-[var(--text-muted)]">
+                                    {formatTime(message.createdAt)} / #{index + 1}
+                                  </span>
+                                </div>
+                                <MarkdownBlock content={message.content} />
+                              </div>
+                            </article>
+                          ),
+                        )}
                       </div>
                     </div>
-
-                    {messages.map((message, index) =>
-                      message.role === "user" ? (
-                        <div
-                          key={message.id}
-                          className="animate-chat-entry mono-copy border-l border-[rgba(168,85,247,0.32)] pl-4 text-[13px] text-[var(--text-primary)]"
-                        >
-                          <div className="mb-1 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-                            <span>{formatTime(message.createdAt)}</span>
-                            <span>user.prompt</span>
-                          </div>
-                          <p className="whitespace-pre-wrap leading-7">
-                            <span className="mr-2 text-[var(--accent-purple)]">&gt;</span>
-                            {message.content}
-                          </p>
-                        </div>
-                      ) : (
-                        <article
-                          key={message.id}
-                          className="animate-chat-entry pixel-frame depth-panel relative overflow-hidden rounded-[20px] pl-4"
-                        >
-                          <span className="absolute inset-y-0 left-0 w-[3px] bg-[var(--accent-purple)]" />
-                          <div className="p-4">
-                            <div className="mb-3 flex items-center justify-between gap-3 border-b border-[var(--border-default)] pb-3">
-                              <span
-                                className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
-                                style={{ fontFamily: "var(--font-pixel)" }}
-                              >
-                                pixy.voice
-                              </span>
-                              <span className="text-[12px] text-[var(--text-muted)]">
-                                {formatTime(message.createdAt)} / #{index + 1}
-                              </span>
-                            </div>
-                            <MarkdownBlock content={message.content} />
-                          </div>
-                        </article>
-                      ),
-                    )}
                   </div>
                 </div>
-              </div>
 
-              <div className="border-t border-[var(--border-default)] px-5 py-4">
-                {simulatorMode ? (
-                  <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
-                    ⚠ Simulator mode — responses are mocked
-                  </div>
-                ) : null}
-                {warnings.length > 0 ? (
-                  <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
-                    {warnings.join(" ")}
-                  </div>
-                ) : null}
-                {error ? (
-                  <div className="mb-3 rounded-lg border border-[rgba(239,68,68,0.22)] bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-[var(--accent-red)]">
-                    {error}
-                  </div>
-                ) : null}
+                <div className="border-t border-[var(--border-default)] px-5 py-4">
+                  {simulatorMode ? (
+                    <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
+                      ⚠ Simulator mode — responses are mocked
+                    </div>
+                  ) : null}
+                  {warnings.length > 0 ? (
+                    <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
+                      {warnings.join(" ")}
+                    </div>
+                  ) : null}
+                  {error ? (
+                    <div className="mb-3 rounded-lg border border-[rgba(239,68,68,0.22)] bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-[var(--accent-red)]">
+                      {error}
+                    </div>
+                  ) : null}
 
-                <form ref={formRef} onSubmit={handleSubmit} className="pixel-frame depth-panel rounded-[20px] p-3">
-                  <div className="flex items-end gap-3">
-                    <span
-                      className="pb-3 text-[16px] uppercase tracking-[0.12em] text-[var(--accent-purple)]"
-                      style={{ fontFamily: "var(--font-pixel)" }}
-                    >
-                      $
-                    </span>
-                    <textarea
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          formRef.current?.requestSubmit();
-                        }
-                      }}
-                      rows={3}
-                      placeholder=""
-                      className="min-h-[76px] flex-1 resize-none bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isSending || !draft.trim()}
-                      className="mb-1 inline-flex h-10 items-center gap-2 rounded-lg border border-[rgba(168,85,247,0.28)] bg-[rgba(168,85,247,0.92)] px-4 text-sm font-semibold text-black transition-all duration-150 hover:brightness-110 disabled:cursor-not-allowed disabled:border-[var(--border-default)] disabled:bg-[var(--bg-surface)] disabled:text-[var(--text-muted)]"
-                    >
+                  <form
+                    ref={formRef}
+                    onSubmit={handleSubmit}
+                    className="pixel-frame depth-panel rounded-[20px] p-3"
+                  >
+                    <div className="flex items-end gap-3">
                       <span
-                        className="text-[11px] uppercase tracking-[0.18em]"
+                        className="pb-3 text-[16px] uppercase tracking-[0.12em] text-[var(--accent-purple)]"
                         style={{ fontFamily: "var(--font-pixel)" }}
                       >
-                        send
+                        $
                       </span>
-                      <span>{isSending || isPending ? "..." : "↑"}</span>
-                    </button>
-                  </div>
-                </form>
-              </div>
+                      <textarea
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.shiftKey) {
+                            event.preventDefault();
+                            formRef.current?.requestSubmit();
+                          }
+                        }}
+                        rows={3}
+                        placeholder=""
+                        className="min-h-[76px] flex-1 resize-none bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isSending || !draft.trim()}
+                        className="mb-1 inline-flex h-10 items-center gap-2 rounded-lg border border-[rgba(168,85,247,0.28)] bg-[rgba(168,85,247,0.92)] px-4 text-sm font-semibold text-black transition-all duration-150 hover:brightness-110 disabled:cursor-not-allowed disabled:border-[var(--border-default)] disabled:bg-[var(--bg-surface)] disabled:text-[var(--text-muted)]"
+                      >
+                        <span
+                          className="text-[11px] uppercase tracking-[0.18em]"
+                          style={{ fontFamily: "var(--font-pixel)" }}
+                        >
+                          send
+                        </span>
+                        <span>{isSending || isPending ? "..." : "↑"}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </div>
             ) : null}
           </section>
