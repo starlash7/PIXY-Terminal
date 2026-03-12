@@ -43,10 +43,13 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="flex min-h-full flex-col justify-between border-r border-[var(--border-default)] bg-[var(--bg-primary)]">
+    <aside
+      className="flex min-h-full flex-col justify-between border-r border-[var(--border-default)] bg-[linear-gradient(180deg,rgba(18,12,24,0.98),rgba(12,12,12,0.98))]"
+      style={{ fontFamily: "var(--font-pixel)" }}
+    >
       <nav className="px-3 py-4">
-        <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.28em] text-[var(--text-muted)]">
-          Workspace
+        <p className="px-3 pb-2 text-[11px] uppercase tracking-[0.28em] text-[var(--accent-amber)]">
+          WORKSPACE
         </p>
         <div className="space-y-1">
           {items.map((item) => {
@@ -55,14 +58,14 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-150 ${
+                className={`relative flex items-center gap-3 rounded-[16px] border px-3 py-2.5 text-sm uppercase tracking-[0.08em] transition-all duration-150 ${
                   active
-                    ? "bg-[var(--bg-elevated)] text-[var(--text-primary)]"
-                    : "text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+                    ? "border-[rgba(168,85,247,0.24)] bg-[rgba(168,85,247,0.12)] text-[rgba(248,250,252,0.95)]"
+                    : "border-transparent text-[var(--text-muted)] hover:border-[rgba(168,85,247,0.16)] hover:bg-[rgba(168,85,247,0.08)] hover:text-[rgba(248,250,252,0.92)]"
                 }`}
               >
                 {active ? (
-                  <span className="absolute left-0 top-1.5 h-7 w-0.5 rounded-full bg-[var(--accent-green)]" />
+                  <span className="absolute left-0 top-1.5 h-7 w-0.5 rounded-full bg-[var(--accent-purple)]" />
                 ) : null}
                 <span>{item.icon}</span>
                 <span>{item.label}</span>
@@ -73,10 +76,12 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-[var(--border-default)] px-4 py-3">
-        <p className="mb-1 text-[11px] uppercase tracking-[0.24em] text-[var(--text-muted)]">
-          Local API
+        <p className="mb-1 text-[11px] uppercase tracking-[0.24em] text-[var(--accent-amber)]">
+          LOCAL API
         </p>
-        <p className="font-mono text-[12px] text-[var(--text-muted)]">127.0.0.1:8000</p>
+        <p className="text-[12px] uppercase tracking-[0.14em] text-[var(--accent-purple)]">
+          127.0.0.1:8000
+        </p>
       </div>
     </aside>
   );

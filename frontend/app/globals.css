@@ -17,7 +17,7 @@
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);
-  --font-sans: var(--font-app-sans);
+  --font-sans: var(--font-pixel);
   --font-mono: var(--font-jetbrains-mono);
 }
 
@@ -33,7 +33,7 @@ body {
   margin: 0;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-app-sans), sans-serif;
+  font-family: var(--font-pixel), sans-serif;
 }
 
 body::-webkit-scrollbar,
@@ -87,11 +87,11 @@ textarea {
 }
 
 .mono-copy {
-  font-family: var(--font-jetbrains-mono), monospace;
+  font-family: var(--font-pixel), sans-serif;
 }
 
 .markdown-copy {
-  font-family: var(--font-jetbrains-mono), monospace;
+  font-family: var(--font-pixel), sans-serif;
   font-size: 13px;
   line-height: 1.8;
 }

@@ -71,10 +71,13 @@ export function DashboardPanel() {
   ];
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] flex-col">
+    <div
+      className="flex h-[calc(100vh-3rem)] flex-col"
+      style={{ fontFamily: "var(--font-pixel)" }}
+    >
       <div className="border-b border-[var(--border-default)] px-6 py-4">
-        <h1 className="text-[20px] font-semibold text-[var(--text-primary)]">Dashboard</h1>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">
+        <h1 className="text-[20px] font-semibold text-[var(--accent-amber)]">DASHBOARD</h1>
+        <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
           Sessions, skills, and memory in one overview.
         </p>
       </div>
@@ -89,22 +92,27 @@ export function DashboardPanel() {
 
           <section className="grid grid-cols-3 gap-4">
             {statCards.map((card) => (
-              <article key={card.label} className="panel p-5 transition-all duration-150">
-                <p className="text-sm text-[var(--text-muted)]">{card.label}</p>
-                <p className="mono-copy mt-4 text-[32px] font-semibold text-[var(--text-primary)]">
+              <article
+                key={card.label}
+                className="pixel-frame depth-panel rounded-[22px] p-5 transition-all duration-150"
+              >
+                <p className="text-[13px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
+                  {card.label}
+                </p>
+                <p className="mt-5 text-[42px] leading-none text-[rgba(196,181,253,0.95)]">
                   {card.value}
                 </p>
-                <p className="mt-2 text-sm text-[var(--text-muted)]">{card.detail}</p>
+                <p className="mt-4 text-sm leading-7 text-[var(--text-muted)]">{card.detail}</p>
               </article>
             ))}
           </section>
 
-          <section className="panel overflow-hidden">
+          <section className="pixel-frame depth-panel overflow-hidden rounded-[22px]">
             <div className="flex items-center justify-between border-b border-[var(--border-default)] px-5 py-4">
-              <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                Recent Sessions
+              <h2 className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                RECENT SESSIONS
               </h2>
-              <span className="mono-copy text-xs text-[var(--text-muted)]">
+              <span className="text-xs text-[var(--text-muted)]">
                 {(sessions?.sessions.length ?? 0).toString()} tracked
               </span>
             </div>
@@ -114,10 +122,10 @@ export function DashboardPanel() {
                   <a
                     key={session.id}
                     href="/chat"
-                    className="flex items-center justify-between gap-4 border-b border-[var(--border-default)] px-5 py-4 transition-all duration-150 last:border-b-0 hover:bg-[var(--bg-elevated)]"
+                    className="flex items-center justify-between gap-4 border-b border-[var(--border-default)] px-5 py-4 transition-all duration-150 last:border-b-0 hover:bg-[rgba(168,85,247,0.08)]"
                   >
                     <div className="min-w-0">
-                      <p className="mono-copy text-sm text-[var(--accent-purple)]">
+                      <p className="text-sm text-[var(--accent-purple)]">
                         {session.id}
                       </p>
                       <p className="mt-1 truncate text-sm text-[var(--text-primary)]">
@@ -142,17 +150,17 @@ export function DashboardPanel() {
             </div>
           </section>
 
-          <section id="memory-preview" className="panel">
+          <section id="memory-preview" className="pixel-frame depth-panel rounded-[22px]">
             <div className="flex items-center justify-between border-b border-[var(--border-default)] px-5 py-4">
-              <h2 className="text-base font-semibold text-[var(--text-primary)]">
-                Memory Preview
+              <h2 className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                MEMORY PREVIEW
               </h2>
-              <span className="mono-copy text-xs text-[var(--text-muted)]">
+              <span className="text-xs text-[var(--text-muted)]">
                 {memory?.path ?? "MEMORY.md unavailable"}
               </span>
             </div>
             <div className="max-h-48 overflow-y-auto px-5 py-4">
-              <pre className="mono-copy whitespace-pre-wrap text-[14px] leading-7 text-[var(--text-primary)]">
+              <pre className="whitespace-pre-wrap text-[14px] leading-7 text-[var(--text-primary)]">
                 {memory?.content || "No MEMORY.md content available."}
               </pre>
             </div>

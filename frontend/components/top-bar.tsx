@@ -11,12 +11,15 @@ function SettingsIcon() {
 
 export function TopBar() {
   return (
-    <header className="flex h-12 items-center justify-between border-b border-[var(--border-default)] bg-[var(--bg-primary)] px-4">
+    <header
+      className="flex h-12 items-center justify-between border-b border-[var(--border-default)] bg-[linear-gradient(180deg,rgba(18,12,24,0.98),rgba(12,12,12,0.98))] px-4"
+      style={{ fontFamily: "var(--font-pixel)" }}
+    >
       <div className="flex items-center gap-3">
-        <span className="font-mono text-sm font-semibold uppercase tracking-[0.32em] text-[var(--accent-green)]">
+        <span className="text-sm font-semibold uppercase tracking-[0.32em] text-[var(--accent-amber)]">
           PIXY
         </span>
-        <span className="text-sm uppercase tracking-[0.24em] text-[var(--text-muted)]">
+        <span className="text-sm uppercase tracking-[0.24em] text-[var(--accent-purple)]">
           TERMINAL
         </span>
       </div>
@@ -25,7 +28,7 @@ export function TopBar() {
         <button
           type="button"
           aria-label="Settings"
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] text-[var(--text-muted)] transition-all duration-150 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]"
+          className="pixel-frame depth-panel inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--accent-purple)] transition-all duration-150 hover:text-[var(--accent-amber)]"
         >
           <SettingsIcon />
         </button>

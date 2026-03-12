@@ -58,7 +58,10 @@ export function StatusBadge() {
   );
 
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-1.5 text-xs text-[var(--text-primary)] transition-all duration-150">
+    <div
+      className="inline-flex items-center gap-2 rounded-full border border-[rgba(168,85,247,0.2)] bg-[rgba(24,16,32,0.86)] px-3 py-1.5 text-[11px] uppercase tracking-[0.16em] text-[var(--text-primary)] transition-all duration-150"
+      style={{ fontFamily: "var(--font-pixel)" }}
+    >
       <span className={`${connected ? "pulse-dot" : ""} h-2 w-2 rounded-full`}>
         <span className={`block h-2 w-2 rounded-full ${dotTone(health)}`} />
       </span>

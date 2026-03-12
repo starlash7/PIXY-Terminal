@@ -222,7 +222,7 @@ export function ChatWorkspace() {
         : "max-w-[1160px]";
   const stageHeightClass =
     windowMode === "maximized"
-      ? "h-screen"
+      ? "h-full"
       : windowMode === "minimized"
         ? "h-[3.75rem]"
         : "h-[42rem]";
@@ -231,7 +231,13 @@ export function ChatWorkspace() {
       ? "rounded-none border-x-0 border-y-0"
       : "rounded-[28px]";
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--bg-primary)]">
+    <div
+      className="flex min-h-screen flex-col bg-[var(--bg-primary)]"
+      style={{ fontFamily: "var(--font-pixel)" }}
+    >
+      <div className="border-b border-[var(--border-default)] px-6 py-4">
+        <h1 className="text-[20px] font-semibold text-[var(--accent-amber)]">PIXY TERMINAL</h1>
+      </div>
       <div className={`min-h-0 flex-1 ${pagePaddingClass}`}>
         <div className={`mx-auto flex h-full ${containerWidthClass} flex-col gap-4`}>
           <section
@@ -289,7 +295,7 @@ export function ChatWorkspace() {
                     </button>
                   </div>
                 </div>
-                <span className="font-mono text-[12px] text-[var(--text-muted)]">~/pixy/chat</span>
+                <span className="text-[12px] text-[var(--text-muted)]">~/pixy/chat</span>
               </div>
               <div className="flex items-center gap-2">
                 <Link
@@ -345,7 +351,7 @@ export function ChatWorkspace() {
                         >
                           pixy.presence
                         </span>
-                        <span className="font-mono text-[12px] text-[var(--text-muted)]">
+                        <span className="text-[12px] text-[var(--text-muted)]">
                           {MOOD_COPY[mood]}
                         </span>
                       </div>
@@ -380,7 +386,7 @@ export function ChatWorkspace() {
                               >
                                 pixy.voice
                               </span>
-                              <span className="font-mono text-[12px] text-[var(--text-muted)]">
+                              <span className="text-[12px] text-[var(--text-muted)]">
                                 {formatTime(message.createdAt)} / #{index + 1}
                               </span>
                             </div>
@@ -429,7 +435,7 @@ export function ChatWorkspace() {
                       }}
                       rows={3}
                       placeholder=""
-                      className="min-h-[76px] flex-1 resize-none bg-transparent font-mono text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                      className="min-h-[76px] flex-1 resize-none bg-transparent text-sm text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
                     />
                     <button
                       type="submit"
@@ -442,7 +448,7 @@ export function ChatWorkspace() {
                       >
                         send
                       </span>
-                      <span className="font-mono">{isSending || isPending ? "..." : "↑"}</span>
+                      <span>{isSending || isPending ? "..." : "↑"}</span>
                     </button>
                   </div>
                 </form>
@@ -453,24 +459,22 @@ export function ChatWorkspace() {
 
           {showDock ? (
             <section className="grid grid-cols-[1.25fr_0.9fr_0.85fr] gap-4">
-            <article className="pixel-frame depth-panel rounded-[22px] px-5 py-4">
-              <div className="flex items-center justify-between gap-3">
+            <article className="pixel-frame depth-panel flex h-full flex-col rounded-[22px] px-5 py-4">
+              <div>
                 <span
-                  className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                  className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
                   style={{ fontFamily: "var(--font-pixel)" }}
                 >
                   talk time
                 </span>
-              </div>
-              <div className="mt-5">
                 <p
-                  className="text-[46px] leading-none text-[rgba(196,181,253,0.95)]"
+                  className="mt-6 text-[64px] leading-none text-[rgba(196,181,253,0.95)]"
                   style={{ fontFamily: "var(--font-pixel)" }}
                 >
                   {conversationDuration}
                 </p>
               </div>
-              <div className="mt-5 grid grid-cols-3 gap-3 font-mono text-[12px] text-[var(--text-muted)]">
+              <div className="mt-auto grid grid-cols-3 gap-3 pt-8 text-[12px] text-[var(--text-muted)]">
                 <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
                     started
@@ -492,76 +496,70 @@ export function ChatWorkspace() {
               </div>
             </article>
 
-            <article className="pixel-frame rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
+            <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <RuntimePulseIcon />
                   <span
-                    className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                    className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
                     style={{ fontFamily: "var(--font-pixel)" }}
                   >
-                    {"// RUNTIME_DIAGNOSTICS"}
+                    {"RUNTIME"}
                   </span>
                 </div>
               </div>
-              <div className="mt-5 space-y-3">
-                <div className="flex items-center justify-between gap-4">
+              <div className="mt-6 space-y-5">
+                <div className="flex items-center justify-between gap-4 py-1">
                   <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
                     Inference latency
                   </span>
-                  <span className="font-mono text-[15px] font-semibold text-[var(--accent-green)]">
+                  <span className="text-[15px] font-semibold text-[var(--accent-green)]">
                     340ms
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center justify-between gap-4 py-1">
                   <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
                     Context usage
                   </span>
-                  <span className="font-mono text-[15px] font-semibold text-[var(--accent-amber)]">
+                  <span className="text-[15px] font-semibold text-[var(--accent-amber)]">
                     78%
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center justify-between gap-4 py-1">
                   <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
                     Active threads
                   </span>
-                  <span className="font-mono text-[15px] font-semibold text-[var(--text-primary)]">
+                  <span className="text-[15px] font-semibold text-[var(--text-primary)]">
                     14
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center justify-between gap-4 py-1">
                   <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
                     Memory heap
                   </span>
-                  <span className="font-mono text-[15px] font-semibold text-[var(--text-primary)]">
+                  <span className="text-[15px] font-semibold text-[var(--text-primary)]">
                     6.2 / 16 GB
                   </span>
                 </div>
               </div>
             </article>
 
-            <article className="pixel-frame rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
+            <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <MemoryLayerIcon />
                   <span
-                    className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                    className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
                     style={{ fontFamily: "var(--font-pixel)" }}
                   >
-                    {"// MEMORY_LAYER"}
+                    {"MEMORY"}
                   </span>
                 </div>
-                <span
-                  className="rounded-[0.45rem] border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.12)] px-3 py-1 text-[11px] uppercase tracking-[0.2em] text-[var(--accent-green)]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  active
-                </span>
               </div>
               <div className="mt-5">
-                <div className="rounded-[1rem] border border-[rgba(34,197,94,0.14)] bg-[rgba(34,197,94,0.05)] px-4 py-4">
+                <div className="rounded-[1rem] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-4 py-4">
                   <div className="flex items-start gap-4">
-                    <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[var(--accent-green)]" />
+                    <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[var(--accent-purple)]" />
                     <p className="text-[15px] leading-8 text-[rgba(226,232,240,0.74)]">
                       User prefers concise diagnostic format with bullet summaries and explicit
                       numeric thresholds.
