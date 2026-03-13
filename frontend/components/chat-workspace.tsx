@@ -5,9 +5,9 @@ import { useEffect, useRef, useState, useTransition } from "react";
 
 import { AgentPresence } from "@/components/agent-presence";
 import { MarkdownBlock } from "@/components/markdown-block";
-import { getJson, postJson } from "@/lib/client";
+import { postJson } from "@/lib/client";
 import { buildThoughtCue, type AgentState, type ThoughtCue } from "@/lib/agent-presence";
-import type { ChatResponse, HealthResponse } from "@/lib/types";
+import type { ChatResponse } from "@/lib/types";
 
 type Message = {
   id: string;
@@ -17,10 +17,6 @@ type Message = {
 };
 
 type WindowMode = "windowed" | "maximized" | "minimized";
-
-async function loadHealth(): Promise<HealthResponse> {
-  return getJson<HealthResponse>("/api/health");
-}
 
 function clearTimeoutRef(timeoutRef: React.MutableRefObject<number | null>) {
   if (timeoutRef.current !== null) {
@@ -91,7 +87,6 @@ export function ChatWorkspace() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -106,17 +101,6 @@ export function ChatWorkspace() {
   const settleTimeoutRef = useRef<number | null>(null);
   const lastThoughtTextRef = useRef<string | null>(null);
 
-  async function refreshHealth() {
-    const healthData = await loadHealth();
-    setHealth(healthData);
-  }
-
-  useEffect(() => {
-    void refreshHealth().catch(() => {
-      setHealth(null);
-    });
-  }, []);
-
   useEffect(() => {
     const container = scrollRef.current;
     if (!container) {
@@ -125,8 +109,6 @@ export function ChatWorkspace() {
 
     container.scrollTop = container.scrollHeight;
   }, [messages, isSending]);
-
-  const simulatorMode = health?.runtime_mode === "simulator";
 
   useEffect(() => {
     return () => {
@@ -215,10 +197,6 @@ export function ChatWorkspace() {
       clearTimeoutRef(thinkingTimeoutRef);
       showThought(response.warnings.length > 0 ? "warning" : "responding");
       settlePresence();
-
-      void refreshHealth().catch(() => {
-        setHealth(null);
-      });
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -416,12 +394,7 @@ export function ChatWorkspace() {
                   </div>
                 </div>
 
-                <div className="border-t border-[var(--border-default)] px-5 py-4">
-                  {simulatorMode ? (
-                    <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
-                      ⚠ Simulator mode — responses are mocked
-                    </div>
-                  ) : null}
+                <div className="px-5 py-4">
                   {warnings.length > 0 ? (
                     <div className="mb-3 rounded-lg border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-4 py-3 text-sm text-[var(--accent-amber)]">
                       {warnings.join(" ")}

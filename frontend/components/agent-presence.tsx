@@ -1,5 +1,7 @@
-import { AgentHud } from "@/components/agent-hud";
-import { ThoughtBubble } from "@/components/thought-bubble";
+"use client";
+
+import { useEffect, useRef } from "react";
+
 import type { AgentState, ThoughtCue } from "@/lib/agent-presence";
 
 type AgentPresenceProps = {
@@ -7,6 +9,16 @@ type AgentPresenceProps = {
   thoughtCue: ThoughtCue | null;
   messageCount: number;
   hasWarning: boolean;
+};
+
+const ASCII_RAMP = " .,:-~=+*#%@";
+
+const STATE_TINT: Record<AgentState, [number, number, number]> = {
+  idle: [214, 224, 255],
+  listening: [255, 213, 102],
+  thinking: [222, 182, 255],
+  responding: [164, 255, 219],
+  warning: [255, 130, 130],
 };
 
 const PRESENCE_MOTION: Record<AgentState, string> = {
@@ -17,277 +29,297 @@ const PRESENCE_MOTION: Record<AgentState, string> = {
   warning: "agent-state-warning",
 };
 
-const HALO_TONE: Record<AgentState, string> = {
-  idle: "bg-[radial-gradient(circle,rgba(168,85,247,0.22),transparent_68%)] opacity-80",
-  listening: "bg-[radial-gradient(circle,rgba(245,158,11,0.22),transparent_70%)] opacity-85",
-  thinking: "bg-[radial-gradient(circle,rgba(192,132,252,0.3),transparent_66%)] opacity-95",
-  responding: "bg-[radial-gradient(circle,rgba(216,180,254,0.26),transparent_68%)] opacity-90",
-  warning: "bg-[radial-gradient(circle,rgba(245,158,11,0.24),transparent_68%)] opacity-85",
-};
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
-const CORE_TONE: Record<AgentState, string> = {
-  idle: "rgba(196,181,253,0.95)",
-  listening: "rgba(253,224,71,0.92)",
-  thinking: "rgba(216,180,254,0.95)",
-  responding: "rgba(248,250,252,0.95)",
-  warning: "rgba(251,191,36,0.95)",
-};
+function mixChannel(base: number, tint: number, amount: number) {
+  return Math.round(base + (tint - base) * amount);
+}
 
-function PresenceSpectrum({ state }: { state: AgentState }) {
-  const spectrumTone =
+function renderAsciiFrame(
+  ctx: CanvasRenderingContext2D,
+  bufferCtx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+  state: AgentState,
+  time: number,
+) {
+  const cell =
+    state === "thinking" ? 5.8 : state === "warning" ? 6 : state === "responding" ? 6.1 : 6.3;
+  const lineHeight = cell * 1.06;
+  const columns = Math.max(28, Math.floor(width / cell));
+  const rows = Math.max(34, Math.floor(height / lineHeight));
+  const tint = STATE_TINT[state];
+  const phase = time * 0.001;
+
+  if (bufferCtx.canvas.width !== columns || bufferCtx.canvas.height !== rows) {
+    bufferCtx.canvas.width = columns;
+    bufferCtx.canvas.height = rows;
+  }
+
+  const imageAspect = image.naturalWidth / image.naturalHeight;
+  const targetAspect = columns / rows;
+  const focusX = 0.52;
+  const focusY = 0.4;
+  const zoom = 1.28;
+  let drawWidth = columns;
+  let drawHeight = rows;
+  let offsetX = 0;
+  let offsetY = 0;
+
+  if (imageAspect > targetAspect) {
+    drawHeight = rows;
+    drawWidth = drawHeight * imageAspect;
+    offsetX = columns * 0.5 - drawWidth * focusX;
+  } else {
+    drawWidth = columns;
+    drawHeight = drawWidth / imageAspect;
+    offsetY = rows * 0.48 - drawHeight * focusY;
+  }
+
+  drawWidth *= zoom;
+  drawHeight *= zoom;
+  offsetX = columns * 0.5 - drawWidth * focusX;
+  offsetY = rows * 0.48 - drawHeight * focusY;
+
+  const driftX =
     state === "warning"
-      ? "from-[rgba(251,191,36,0.95)] to-[rgba(253,230,138,0.4)]"
-      : "from-[rgba(216,180,254,0.95)] to-[rgba(196,181,253,0.3)]";
-  const bars =
-    state === "thinking"
-      ? [16, 26, 34, 46, 38, 30, 22, 14]
-      : state === "responding"
-        ? [12, 20, 32, 24, 28, 18, 26, 12]
-        : state === "warning"
-          ? [14, 24, 18, 30, 16, 28, 20, 12]
-          : [8, 12, 16, 20, 16, 14, 12, 8];
+      ? Math.sin(phase * 9) * 0.9
+      : state === "thinking"
+        ? Math.sin(phase * 2.4) * 0.45
+        : Math.sin(phase * 1.4) * 0.24;
+  const driftY =
+    state === "responding"
+      ? Math.sin(phase * 2) * 0.35
+      : state === "idle"
+        ? Math.sin(phase * 1.1) * 0.18
+        : Math.cos(phase * 1.7) * 0.24;
+  const visibleDriftX = (driftX / Math.max(1, columns)) * width;
+  const visibleDriftY = (driftY / Math.max(1, rows)) * height;
 
-  return (
-    <div className="flex items-end gap-1.5">
-      {bars.map((height, index) => (
-        <span
-          key={`${state}-${index}`}
-          className={`presence-spectrum-bar inline-block w-[6px] rounded-full bg-gradient-to-t ${spectrumTone}`}
-          style={{
-            height,
-            animationDelay: `${index * 80}ms`,
-            animationDuration: `${1500 + index * 60}ms`,
-          }}
-        />
-      ))}
-    </div>
+  bufferCtx.clearRect(0, 0, columns, rows);
+  bufferCtx.drawImage(image, offsetX + driftX, offsetY + driftY, drawWidth, drawHeight);
+
+  const frame = bufferCtx.getImageData(0, 0, columns, rows).data;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#04070d";
+  ctx.fillRect(0, 0, width, height);
+  let visibleDrawWidth = width;
+  let visibleDrawHeight = height;
+
+  if (imageAspect > width / height) {
+    visibleDrawHeight = height;
+    visibleDrawWidth = visibleDrawHeight * imageAspect;
+  } else {
+    visibleDrawWidth = width;
+    visibleDrawHeight = visibleDrawWidth / imageAspect;
+  }
+
+  visibleDrawWidth *= zoom;
+  visibleDrawHeight *= zoom;
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.drawImage(
+    image,
+    width * 0.5 - visibleDrawWidth * focusX + visibleDriftX,
+    height * 0.48 - visibleDrawHeight * focusY + visibleDriftY,
+    visibleDrawWidth,
+    visibleDrawHeight,
   );
+  ctx.restore();
+  ctx.font = `${cell}px "JetBrains Mono", monospace`;
+  ctx.textBaseline = "top";
+
+  for (let row = 0; row < rows; row += 1) {
+    const scanShift =
+      state === "warning" && row % 6 === 0 ? Math.sin(phase * 32 + row) * 2.2 : 0;
+    const waveShift =
+      state === "responding" ? Math.sin(phase * 4 + row * 0.38) * 1.2 : 0;
+    const scanFade = 0.92 + Math.sin(phase * 6 + row * 0.42) * 0.08;
+
+    for (let column = 0; column < columns; column += 1) {
+      const pixelIndex = (row * columns + column) * 4;
+      const red = frame[pixelIndex];
+      const green = frame[pixelIndex + 1];
+      const blue = frame[pixelIndex + 2];
+      const alpha = frame[pixelIndex + 3] / 255;
+
+      if (alpha < 0.02) {
+        continue;
+      }
+
+      const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+      const rightIndex = pixelIndex + 4 < frame.length ? pixelIndex + 4 : pixelIndex;
+      const bottomIndex = pixelIndex + columns * 4 < frame.length ? pixelIndex + columns * 4 : pixelIndex;
+      const rightLuminance =
+        (0.2126 * frame[rightIndex] +
+          0.7152 * frame[rightIndex + 1] +
+          0.0722 * frame[rightIndex + 2]) /
+        255;
+      const bottomLuminance =
+        (0.2126 * frame[bottomIndex] +
+          0.7152 * frame[bottomIndex + 1] +
+          0.0722 * frame[bottomIndex + 2]) /
+        255;
+      const saturation = (Math.max(red, green, blue) - Math.min(red, green, blue)) / 255;
+      const edge = clamp(
+        Math.abs(luminance - rightLuminance) + Math.abs(luminance - bottomLuminance),
+        0,
+        1,
+      );
+      const signal = clamp(
+        luminance * 0.34 + saturation * 0.72 + edge * 1.12,
+        0,
+        1,
+      );
+      const normX = column / Math.max(1, columns - 1);
+      const normY = row / Math.max(1, rows - 1);
+      const focusDistance = Math.hypot((normX - 0.5) / 0.56, (normY - 0.44) / 0.72);
+      const focusGain = clamp(1.18 - focusDistance * 0.82, 0.26, 1);
+      const weightedSignal = clamp(signal * (0.58 + focusGain * 0.66), 0, 1);
+
+      if (weightedSignal < 0.09) {
+        continue;
+      }
+
+      const density = clamp((weightedSignal - 0.09) / 0.91, 0, 1);
+      const rampIndex = Math.floor(density * (ASCII_RAMP.length - 1));
+      const glyph = ASCII_RAMP[rampIndex];
+
+      if (glyph === " ") {
+        continue;
+      }
+
+      const tintMix =
+        state === "idle"
+          ? 0.16
+          : state === "responding"
+            ? 0.24
+            : state === "thinking"
+              ? 0.22
+              : state === "listening"
+                ? 0.18
+                : 0.34;
+
+      const outRed = mixChannel(red, tint[0], tintMix);
+      const outGreen = mixChannel(green, tint[1], tintMix);
+      const outBlue = mixChannel(blue, tint[2], tintMix);
+      const opacity =
+        clamp(0.1 + density * 0.94, 0.1, 1) *
+        scanFade *
+        (0.34 + focusGain * 0.72);
+
+      ctx.fillStyle = `rgba(${outRed}, ${outGreen}, ${outBlue}, ${opacity})`;
+      ctx.fillText(glyph, column * cell + scanShift + waveShift, row * lineHeight);
+    }
+  }
+
+  const sweepPosition = (Math.sin(phase * 1.6) * 0.5 + 0.5) * height;
+  const sweepAlpha =
+    state === "idle" ? 0.04 : state === "thinking" ? 0.08 : state === "warning" ? 0.12 : 0.06;
+
+  ctx.fillStyle = `rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${sweepAlpha})`;
+  ctx.fillRect(0, sweepPosition, width, Math.max(8, height * 0.035));
+
+  if (state === "warning") {
+    ctx.fillStyle = "rgba(255, 120, 120, 0.08)";
+    for (let index = 0; index < 4; index += 1) {
+      const y = ((phase * 120 + index * 56) % height);
+      ctx.fillRect(0, y, width, 1);
+    }
+  }
 }
 
 function HolographicMuse({ state }: { state: AgentState }) {
-  const lineTone = CORE_TONE[state];
-  const eyes =
-    state === "warning"
-      ? {
-          left: "M144 218c10-12 22-18 36-18",
-          right: "M180 200c14 0 26 6 36 18",
-        }
-      : state === "thinking"
-        ? {
-            left: "M146 214c10-8 20-12 34-12",
-            right: "M180 202c14 0 24 4 34 12",
-          }
-        : {
-            left: "M148 220c10-10 22-15 34-15",
-            right: "M178 205c12 0 24 5 34 15",
-          };
-  const mouth =
-    state === "responding"
-      ? "M158 288c9 11 17 15 24 15s15-4 24-15"
-      : state === "thinking"
-        ? "M162 294c8 4 14 6 18 6s10-2 18-6"
-        : state === "warning"
-          ? "M160 296c10-4 16-6 20-6s10 2 20 6"
-          : "M160 290c8 7 15 10 22 10s14-3 22-10";
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    const context = canvas.getContext("2d");
+    const buffer = document.createElement("canvas");
+    const bufferContext = buffer.getContext("2d", { willReadFrequently: true });
+
+    if (!context || !bufferContext) {
+      return;
+    }
+
+    const image = new window.Image();
+    image.decoding = "async";
+    image.src = "/api/character-image";
+
+    let frameId = 0;
+    let disposed = false;
+
+    const resize = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(bounds.width));
+      const height = Math.max(1, Math.floor(bounds.height));
+      const ratio = window.devicePixelRatio || 1;
+
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.imageSmoothingEnabled = false;
+    };
+
+    const draw = (time: number) => {
+      if (disposed) {
+        return;
+      }
+
+      const bounds = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(bounds.width));
+      const height = Math.max(1, Math.floor(bounds.height));
+
+      if (image.complete && image.naturalWidth > 0) {
+        renderAsciiFrame(context, bufferContext, image, width, height, state, time);
+      }
+
+      frameId = window.requestAnimationFrame(draw);
+    };
+
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
+    resize();
+
+    image.onload = () => {
+      resize();
+      frameId = window.requestAnimationFrame(draw);
+    };
+
+    if (image.complete && image.naturalWidth > 0) {
+      frameId = window.requestAnimationFrame(draw);
+    }
+
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [state]);
 
   return (
-    <div className={`relative h-full w-full ${PRESENCE_MOTION[state]}`}>
-      <div className="absolute inset-x-[18%] top-[12%] h-[46%] rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.2),transparent_70%)] blur-3xl" />
-      <div className="absolute inset-x-[18%] top-[16%] h-[48%] rounded-full border border-[rgba(168,85,247,0.14)] opacity-90 holo-orbit" />
-      <div className="absolute inset-x-[22%] top-[20%] h-[40%] rounded-full border border-[rgba(216,180,254,0.16)] opacity-75 [animation-duration:18s] holo-orbit" />
-      <div className="absolute inset-x-[30%] top-[24%] h-[28%] rounded-full border border-[rgba(255,255,255,0.08)] opacity-70 [animation-duration:10s] holo-orbit" />
-
-      <svg
-        viewBox="0 0 360 520"
-        aria-hidden="true"
-        className="agent-ghost-drift absolute inset-[6%] z-0 h-[88%] w-[88%] opacity-35 blur-[2px]"
-      >
-        <defs>
-          <linearGradient id="presence-ghost" x1="180" y1="80" x2="180" y2="440">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.16)" />
-            <stop offset="100%" stopColor="rgba(168,85,247,0)" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M182 88c-58 0-94 42-94 102 0 36 12 72 28 95 10 15 15 27 16 43 1 13 9 24 21 28 18 7 29 9 54 9 25 0 36-2 54-9 12-4 20-15 21-28 1-16 6-28 16-43 16-23 28-59 28-95 0-60-36-102-94-102Z"
-          fill="url(#presence-ghost)"
-          stroke="rgba(216,180,254,0.26)"
-          strokeWidth="2"
-        />
-      </svg>
-
-      <svg
-        viewBox="0 0 360 520"
-        aria-hidden="true"
-        className="absolute inset-[6%] z-10 h-[88%] w-[88%]"
-      >
-        <defs>
-          <linearGradient id="presence-outline" x1="180" y1="60" x2="180" y2="452">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.84)" />
-            <stop offset="35%" stopColor={lineTone} />
-            <stop offset="100%" stopColor="rgba(168,85,247,0.2)" />
-          </linearGradient>
-          <linearGradient id="presence-fill" x1="180" y1="96" x2="180" y2="456">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
-            <stop offset="45%" stopColor="rgba(168,85,247,0.12)" />
-            <stop offset="100%" stopColor="rgba(8,8,12,0)" />
-          </linearGradient>
-          <radialGradient id="presence-core" cx="50%" cy="34%" r="44%">
-            <stop offset="0%" stopColor="rgba(255,255,255,0.9)" />
-            <stop offset="45%" stopColor={lineTone} />
-            <stop offset="100%" stopColor="rgba(168,85,247,0)" />
-          </radialGradient>
-        </defs>
-
-        <ellipse
-          cx="180"
-          cy="182"
-          rx="88"
-          ry="104"
-          fill="url(#presence-core)"
-          opacity="0.24"
-          className="ascii-signal"
-        />
-
-        <path
-          d="M182 88c-58 0-94 42-94 102 0 36 12 72 28 95 10 15 15 27 16 43 1 13 9 24 21 28 18 7 29 9 54 9 25 0 36-2 54-9 12-4 20-15 21-28 1-16 6-28 16-43 16-23 28-59 28-95 0-60-36-102-94-102Z"
-          fill="url(#presence-fill)"
-          stroke="url(#presence-outline)"
-          strokeWidth="2.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="ascii-signal"
-        />
-
-        <path
-          d="M115 392c22-26 41-38 67-44 12 14 23 22 50 28 24 5 44 9 69 16 22 6 39 19 48 36"
-          fill="none"
-          stroke="url(#presence-outline)"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          opacity="0.72"
-        />
-        <path
-          d="M162 164c8-12 22-18 40-18 18 0 32 6 40 18"
-          fill="none"
-          stroke="url(#presence-outline)"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          opacity="0.55"
-        />
-        <path
-          d="M170 206c7-4 15-6 24-6s17 2 24 6"
-          fill="none"
-          stroke={lineTone}
-          strokeWidth="3"
-          strokeLinecap="round"
-          opacity="0.92"
-        />
-        <path
-          d={eyes.left}
-          fill="none"
-          stroke={lineTone}
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          opacity="0.88"
-        />
-        <path
-          d={eyes.right}
-          fill="none"
-          stroke={lineTone}
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          opacity="0.88"
-        />
-        <path
-          d="M180 214v58"
-          fill="none"
-          stroke="url(#presence-outline)"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          opacity="0.52"
-        />
-        <path
-          d={mouth}
-          fill="none"
-          stroke={lineTone}
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          opacity="0.76"
-        />
-        <path
-          d="M139 118c-22 18-36 43-41 74m164-74c22 18 36 43 41 74"
-          fill="none"
-          stroke="rgba(255,255,255,0.22)"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          opacity="0.75"
-        />
-      </svg>
-
-      <div className="retro-shader absolute inset-[8%] rounded-[42%] bg-[conic-gradient(from_180deg,rgba(168,85,247,0.1),transparent_28%,rgba(255,255,255,0.08),transparent_68%,rgba(168,85,247,0.12))] opacity-60" />
-      <div className="absolute inset-x-[26%] top-[24%] h-[18%] rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.12),transparent_72%)] blur-2xl" />
+    <div className={`relative h-full w-full overflow-hidden ${PRESENCE_MOTION[state]}`}>
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" aria-hidden="true" />
     </div>
   );
 }
 
-export function AgentPresence({
-  state,
-  thoughtCue,
-  messageCount,
-  hasWarning,
-}: AgentPresenceProps) {
+export function AgentPresence({ state }: AgentPresenceProps) {
   return (
     <div className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-[22rem] items-end justify-center px-6 pb-6">
       <div className="relative h-[30rem] w-full">
-        <ThoughtBubble cue={thoughtCue} />
-
         <div className="absolute inset-x-0 bottom-0 top-12">
-          <div className={`agent-halo absolute inset-4 rounded-[40px] blur-3xl ${HALO_TONE[state]}`} />
-
-          <div className="pixel-frame depth-panel relative h-full overflow-hidden rounded-[34px] border-[rgba(168,85,247,0.22)]">
-            <div className="absolute left-4 top-4 z-20 rounded-full border border-[rgba(168,85,247,0.18)] bg-[rgba(12,12,12,0.72)] px-3 py-1">
-              <p className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
-                pixy.agent
-              </p>
-            </div>
-
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(168,85,247,0.16),transparent_40%)]" />
-            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_24%,transparent_68%,rgba(168,85,247,0.08))]" />
-
-            <div className="absolute inset-[12px] overflow-hidden rounded-[28px] border border-[rgba(255,255,255,0.07)] bg-[rgba(8,8,12,0.94)]">
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(28,16,38,0.18),rgba(8,8,12,0.12))]" />
-              <div className="absolute inset-0 terminal-grid opacity-20" />
-              <div className="absolute inset-0 terminal-scanlines opacity-20" />
-
-              <HolographicMuse state={state} />
-
-              <div className="absolute inset-x-6 bottom-[5.25rem] z-20 flex items-end justify-between gap-4">
-                <div>
-                  <p className="text-[9px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
-                    voice activity
-                  </p>
-                  <div className="mt-2">
-                    <PresenceSpectrum state={state} />
-                  </div>
-                </div>
-                <div className="rounded-[16px] border border-[rgba(168,85,247,0.16)] bg-[rgba(10,10,14,0.72)] px-3 py-2">
-                  <p className="text-[9px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
-                    semantic shell
-                  </p>
-                  <p className="mt-1 text-[11px] uppercase tracking-[0.12em] text-[rgba(248,250,252,0.9)]">
-                    {state}
-                  </p>
-                </div>
-              </div>
-
-              <div className="scan-beam absolute inset-0 bg-[linear-gradient(180deg,transparent_8%,rgba(216,180,254,0.12)_48%,transparent_92%)]" />
-
-              <div className="absolute inset-x-4 bottom-4 z-20">
-                <AgentHud state={state} messageCount={messageCount} hasWarning={hasWarning} />
-              </div>
-            </div>
-          </div>
+          <HolographicMuse state={state} />
         </div>
       </div>
     </div>

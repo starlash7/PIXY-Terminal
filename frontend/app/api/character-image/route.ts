@@ -2,23 +2,30 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export async function GET() {
-  const imagePath = path.join(
-    process.cwd(),
-    "..",
-    ".context",
-    "attachments",
-    "image-v3.png",
-  );
-  try {
-    const buffer = await readFile(imagePath);
+  const attachmentDir = path.join(process.cwd(), "..", ".context", "attachments");
+  const candidates = [
+    { fileName: "eadacb9ff56ce317c81a1340cde0d089.jpg", contentType: "image/jpeg" },
+    { fileName: "ascii-dither-export (1).jpg", contentType: "image/jpeg" },
+    { fileName: "ascii-dither-export.jpg", contentType: "image/jpeg" },
+    { fileName: "image-v3.png", contentType: "image/png" },
+  ];
 
-    return new Response(buffer, {
-      headers: {
-        "Content-Type": "image/png",
-        "Cache-Control": "no-store",
-      },
-    });
-  } catch {
+  for (const candidate of candidates) {
+    try {
+      const buffer = await readFile(path.join(attachmentDir, candidate.fileName));
+
+      return new Response(buffer, {
+        headers: {
+          "Content-Type": candidate.contentType,
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch {
+      // Try the next fallback image.
+    }
+  }
+
+  {
     const fallbackSvg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640" fill="none">
         <rect width="640" height="640" rx="48" fill="#11151b"/>
