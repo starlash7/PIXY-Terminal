@@ -9,6 +9,12 @@ export type ApiErrorPayload = {
 
 export type RuntimeMode = "python_api" | "cli" | "simulator";
 
+export type SkillInvocation = {
+  id: string;
+  label: string;
+  detail: string;
+};
+
 export type ChatResponse = {
   reply: string;
   session_id: string;
@@ -16,6 +22,7 @@ export type ChatResponse = {
   request_id: string;
   warnings: string[];
   generated_at: string;
+  skill_invocation?: SkillInvocation | null;
 };
 
 export type SkillCard = {

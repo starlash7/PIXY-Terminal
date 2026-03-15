@@ -1,14 +1,57 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-export async function GET() {
-  const attachmentDir = path.join(process.cwd(), "..", ".context", "attachments");
-  const candidates = [
-    { fileName: "eadacb9ff56ce317c81a1340cde0d089.jpg", contentType: "image/jpeg" },
-    { fileName: "ascii-dither-export (1).jpg", contentType: "image/jpeg" },
-    { fileName: "ascii-dither-export.jpg", contentType: "image/jpeg" },
+const STATE_CANDIDATES: Record<string, { fileName: string; contentType: string }[]> = {
+  idle: [
+    { fileName: "pixy-idle.png", contentType: "image/png" },
+    { fileName: "pixy-idle.jpg", contentType: "image/jpeg" },
+    { fileName: "image-v5.png", contentType: "image/png" },
     { fileName: "image-v3.png", contentType: "image/png" },
-  ];
+  ],
+  listening: [
+    { fileName: "pixy-listening.png", contentType: "image/png" },
+    { fileName: "pixy-listening.jpg", contentType: "image/jpeg" },
+    { fileName: "pixy-idle.png", contentType: "image/png" },
+    { fileName: "image-v5.png", contentType: "image/png" },
+    { fileName: "image-v3.png", contentType: "image/png" },
+  ],
+  thinking: [
+    { fileName: "pixy-thinking.png", contentType: "image/png" },
+    { fileName: "pixy-thinking.jpg", contentType: "image/jpeg" },
+    { fileName: "image-v8.png", contentType: "image/png" },
+    { fileName: "image-v5.png", contentType: "image/png" },
+    { fileName: "image-v3.png", contentType: "image/png" },
+  ],
+  responding: [
+    { fileName: "pixy-responding.png", contentType: "image/png" },
+    { fileName: "pixy-responding.jpg", contentType: "image/jpeg" },
+    { fileName: "image-v5.png", contentType: "image/png" },
+    { fileName: "image-v3.png", contentType: "image/png" },
+  ],
+  warning: [
+    { fileName: "pixy-warning.png", contentType: "image/png" },
+    { fileName: "pixy-warning.jpg", contentType: "image/jpeg" },
+    { fileName: "image-v5.png", contentType: "image/png" },
+    { fileName: "image-v3.png", contentType: "image/png" },
+  ],
+};
+
+const GENERAL_FALLBACKS = [
+  { fileName: "image-v5.png", contentType: "image/png" },
+  { fileName: "image-v8.png", contentType: "image/png" },
+  { fileName: "image-v3.png", contentType: "image/png" },
+  { fileName: "image-v2.png", contentType: "image/png" },
+  { fileName: "image-v1.png", contentType: "image/png" },
+  { fileName: "image.png", contentType: "image/png" },
+  { fileName: "eadacb9ff56ce317c81a1340cde0d089.jpg", contentType: "image/jpeg" },
+  { fileName: "ascii-dither-export (1).jpg", contentType: "image/jpeg" },
+  { fileName: "ascii-dither-export.jpg", contentType: "image/jpeg" },
+];
+
+export async function GET(request: Request) {
+  const attachmentDir = path.join(process.cwd(), "..", ".context", "attachments");
+  const state = new URL(request.url).searchParams.get("state") ?? "idle";
+  const candidates = [...(STATE_CANDIDATES[state] ?? []), ...GENERAL_FALLBACKS];
 
   for (const candidate of candidates) {
     try {

@@ -5,18 +5,26 @@ import { useEffect, useRef, useState, useTransition } from "react";
 
 import { AgentPresence } from "@/components/agent-presence";
 import { MarkdownBlock } from "@/components/markdown-block";
-import { postJson } from "@/lib/client";
+import { getJson, postJson } from "@/lib/client";
 import { buildThoughtCue, type AgentState, type ThoughtCue } from "@/lib/agent-presence";
-import type { ChatResponse } from "@/lib/types";
+import type {
+  ChatResponse,
+  HealthResponse,
+  MemoryResponse,
+  SkillInvocation,
+  SessionsResponse,
+} from "@/lib/types";
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+  skillInvocation?: SkillInvocation | null;
 };
 
 type WindowMode = "windowed" | "maximized" | "minimized";
+type TraceStatus = "idle" | "active" | "done";
 
 function clearTimeoutRef(timeoutRef: React.MutableRefObject<number | null>) {
   if (timeoutRef.current !== null) {
@@ -33,12 +41,110 @@ function formatTime(timestamp: number): string {
   }).format(new Date(timestamp));
 }
 
+function resolveTimestamp(value: number | string | null | undefined): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function formatDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
 
   return `${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function normalizeLine(line: string): string {
+  return line
+    .replace(/^[-*#>\d.\s]+/, "")
+    .replace(/[`*_]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function summarizeText(value: string, maxLength = 58): string {
+  const normalized = normalizeLine(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function extractMemorySignals(content: string | null | undefined): string[] {
+  if (!content) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      content
+        .split("\n")
+        .map(normalizeLine)
+        .filter((line) => line.length > 24),
+    ),
+  ).slice(0, 3);
+}
+
+function shortSessionLabel(sessionId: string | null): string {
+  if (!sessionId) {
+    return "new-thread";
+  }
+
+  return sessionId.length > 14 ? `${sessionId.slice(0, 14)}…` : sessionId;
+}
+
+function extractOpenLoops(messages: Message[], warnings: string[]): string[] {
+  const pending = messages
+    .filter((message) => message.role === "user")
+    .slice(-3)
+    .map((message) => summarizeText(message.content, 52));
+
+  if (warnings.length > 0) {
+    pending.unshift(`Review warning path: ${summarizeText(warnings[0], 36)}`);
+  }
+
+  return Array.from(new Set(pending)).slice(0, 3);
+}
+
+function buildStateTrace(agentState: AgentState, isSending: boolean, hasWarning: boolean) {
+  const activeKey = hasWarning
+    ? "fallback"
+    : isSending
+      ? agentState === "listening"
+        ? "listening"
+        : agentState === "thinking"
+          ? "memory"
+          : "compose"
+      : "settled";
+  const steps = [
+    { key: "listening", label: "Intent capture" },
+    { key: "memory", label: "Memory link" },
+    { key: "compose", label: "Response draft" },
+    { key: "settled", label: "Thread settled" },
+  ];
+  const activeIndex = steps.findIndex((step) => step.key === activeKey);
+
+  return steps.map((step, index) => {
+    let status: TraceStatus = "idle";
+
+    if (index < activeIndex) {
+      status = "done";
+    } else if (index === activeIndex) {
+      status = "active";
+    }
+
+    return {
+      ...step,
+      status,
+    };
+  });
 }
 
 function RuntimePulseIcon() {
@@ -87,6 +193,9 @@ export function ChatWorkspace() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [memory, setMemory] = useState<MemoryResponse | null>(null);
+  const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -100,6 +209,29 @@ export function ChatWorkspace() {
   const thinkingTimeoutRef = useRef<number | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
   const lastThoughtTextRef = useRef<string | null>(null);
+
+  async function refreshContext() {
+    const [healthResult, memoryResult, sessionsResult] = await Promise.allSettled([
+      getJson<HealthResponse>("/api/health"),
+      getJson<MemoryResponse>("/api/memory"),
+      getJson<SessionsResponse>("/api/sessions"),
+    ]);
+
+    if (healthResult.status === "fulfilled") {
+      setHealth(healthResult.value);
+    }
+    if (memoryResult.status === "fulfilled") {
+      setMemory(memoryResult.value);
+    }
+    if (sessionsResult.status === "fulfilled") {
+      setSessions(sessionsResult.value);
+      setSessionId((current) => current ?? sessionsResult.value.sessions[0]?.id ?? null);
+    }
+  }
+
+  useEffect(() => {
+    void refreshContext().catch(() => {});
+  }, []);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -137,13 +269,13 @@ export function ChatWorkspace() {
     }, cue.durationMs);
   }
 
-  function settlePresence(nextState: AgentState = "idle") {
+  function settlePresence(nextState: AgentState = "idle", durationMs = 1400) {
     clearTimeoutRef(settleTimeoutRef);
     settleTimeoutRef.current = window.setTimeout(() => {
       setAgentState(nextState);
       setThoughtCue(null);
       settleTimeoutRef.current = null;
-    }, 1500);
+    }, durationMs);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -173,7 +305,7 @@ export function ChatWorkspace() {
     thinkingTimeoutRef.current = window.setTimeout(() => {
       showThought("thinking");
       thinkingTimeoutRef.current = null;
-    }, 650);
+    }, 520);
 
     try {
       const response = await postJson<ChatResponse>("/api/chat", {
@@ -189,14 +321,17 @@ export function ChatWorkspace() {
             role: "assistant",
             content: response.reply,
             createdAt: Date.now(),
+            skillInvocation: response.skill_invocation ?? null,
           },
         ]);
         setSessionId(response.session_id);
         setWarnings(response.warnings);
       });
       clearTimeoutRef(thinkingTimeoutRef);
-      showThought(response.warnings.length > 0 ? "warning" : "responding");
-      settlePresence();
+      const finalState = response.warnings.length > 0 ? "warning" : "responding";
+      showThought(finalState);
+      settlePresence("idle", finalState === "warning" ? 2200 : 1150);
+      void refreshContext().catch(() => {});
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -217,7 +352,7 @@ export function ChatWorkspace() {
       });
       clearTimeoutRef(thinkingTimeoutRef);
       showThought("warning");
-      settlePresence();
+      settlePresence("idle", 2400);
     } finally {
       setIsSending(false);
     }
@@ -228,8 +363,7 @@ export function ChatWorkspace() {
   const conversationDuration = formatDuration(lastEventAt - startedAt);
   const showWindowBody = windowMode !== "minimized";
   const showDock = windowMode === "windowed";
-  const pagePaddingClass =
-    windowMode === "maximized" ? "px-0 py-0" : "px-6 py-6";
+  const pagePaddingClass = windowMode === "maximized" ? "px-0 py-0" : "px-6 py-6";
   const containerWidthClass =
     windowMode === "maximized"
       ? "max-w-none"
@@ -246,6 +380,42 @@ export function ChatWorkspace() {
     windowMode === "maximized"
       ? "rounded-none border-x-0 border-y-0"
       : "rounded-[28px]";
+  const memorySignals = extractMemorySignals(memory?.content);
+  const activeSession =
+    sessions?.sessions.find((entry) => entry.id === sessionId) ?? sessions?.sessions[0] ?? null;
+  const openLoops = extractOpenLoops(messages, warnings);
+  const continuityOpenLoops =
+    openLoops.length > 0
+      ? openLoops
+      : [
+          activeSession?.title ? `Resume thread: ${summarizeText(activeSession.title, 48)}` : null,
+          activeSession?.preview ? `Follow up: ${summarizeText(activeSession.preview, 52)}` : null,
+          memorySignals[0] ? `Carry memory: ${summarizeText(memorySignals[0], 48)}` : null,
+        ].filter((value): value is string => Boolean(value));
+  const continuitySessionId = sessionId ?? activeSession?.id ?? null;
+  const continuityLastSyncAt = resolveTimestamp(
+    messages.length > 0 ? lastEventAt : activeSession?.last_updated ?? lastEventAt,
+  ) ?? lastEventAt;
+  const continuityTitle = activeSession?.title
+    ? summarizeText(activeSession.title, 26)
+    : shortSessionLabel(continuitySessionId);
+  const continuityHeadline = activeSession?.title
+    ? summarizeText(activeSession.title, 44)
+    : shortSessionLabel(continuitySessionId);
+  const continuityPreview = activeSession?.preview ? summarizeText(activeSession.preview, 40) : null;
+  const latestAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
+  const stateTrace = buildStateTrace(agentState, isSending, warnings.length > 0 || Boolean(error));
+  const recentLearning =
+    memorySignals[1] ??
+    messages
+      .filter((message) => message.role === "user")
+      .slice(-1)
+      .map((message) => summarizeText(message.content, 54))[0] ??
+    "No durable memory written yet.";
+  const activeFocus =
+    continuityOpenLoops[0] ??
+    summarizeText(activeSession?.preview ?? "Waiting for the next instruction.", 56);
+
   return (
     <div
       className="flex min-h-screen flex-col bg-[var(--bg-primary)]"
@@ -351,6 +521,60 @@ export function ChatWorkspace() {
                   <div ref={scrollRef} className="relative z-0 h-full overflow-y-auto">
                     <div className="px-6 py-6 pb-10 pr-[20rem]">
                       <div className="max-w-[780px] space-y-4">
+                        <article className="pixel-frame depth-panel overflow-hidden rounded-[20px] border border-[rgba(168,85,247,0.22)] px-4 py-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <span
+                                className="text-[11px] uppercase tracking-[0.2em] text-[var(--accent-purple)]"
+                                style={{ fontFamily: "var(--font-pixel)" }}
+                              >
+                                thread continuity
+                              </span>
+                              <p className="mt-2 text-[15px] leading-7 text-[var(--text-primary)]">
+                                Resumed{" "}
+                                <span className="text-[rgba(196,181,253,0.95)]">
+                                  {continuityHeadline}
+                                </span>
+                                {continuityPreview ? ` with ${continuityPreview}` : "."}
+                              </p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <span className="rounded-full border border-[rgba(168,85,247,0.18)] bg-[rgba(168,85,247,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
+                                  {health?.runtime_mode ?? "link-pending"}
+                                </span>
+                                <span className="rounded-full border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-green)]">
+                                  memory {memorySignals.length > 0 ? "linked" : "warming"}
+                                </span>
+                                <span className="rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                  {continuityOpenLoops.length} open loops
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                last activity
+                              </p>
+                              <p className="mt-2 text-[13px] text-[var(--text-primary)]">
+                                {formatTime(continuityLastSyncAt)}
+                              </p>
+                            </div>
+                          </div>
+                          {continuityOpenLoops.length > 0 ? (
+                            <div className="mt-4 grid gap-2">
+                              {continuityOpenLoops.map((loop, index) => (
+                                <div
+                                  key={`${loop}-${index}`}
+                                  className="flex items-start gap-3 rounded-[14px] border border-[rgba(168,85,247,0.12)] bg-[rgba(168,85,247,0.04)] px-3 py-2.5"
+                                >
+                                  <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[var(--accent-purple)]" />
+                                  <p className="text-[13px] leading-6 text-[rgba(226,232,240,0.82)]">
+                                    {loop}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </article>
+
                         {messages.map((message, index) =>
                           message.role === "user" ? (
                             <div
@@ -385,6 +609,29 @@ export function ChatWorkspace() {
                                   </span>
                                 </div>
                                 <MarkdownBlock content={message.content} />
+                                {message.id === latestAssistantId ? (
+                                  <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border-default)] pt-3">
+                                    <span className="rounded-full border border-[rgba(168,85,247,0.18)] bg-[rgba(168,85,247,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
+                                      session {shortSessionLabel(sessionId)}
+                                    </span>
+                                    {memorySignals.slice(0, 2).map((signal) => (
+                                      <span
+                                        key={signal}
+                                        className="rounded-full border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-[var(--accent-green)]"
+                                      >
+                                        memory {summarizeText(signal, 28)}
+                                      </span>
+                                    ))}
+                                    <span className="rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                      state {agentState}
+                                    </span>
+                                    {message.skillInvocation ? (
+                                      <span className="rounded-full border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-amber)]">
+                                        skill {message.skillInvocation.label}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                               </div>
                             </article>
                           ),
@@ -453,115 +700,152 @@ export function ChatWorkspace() {
 
           {showDock ? (
             <section className="grid grid-cols-[1.25fr_0.9fr_0.85fr] gap-4">
-            <article className="pixel-frame depth-panel flex h-full flex-col rounded-[22px] px-5 py-4">
-              <div>
-                <span
-                  className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  talk time
-                </span>
-                <p
-                  className="mt-6 text-[64px] leading-none text-[rgba(196,181,253,0.95)]"
-                  style={{ fontFamily: "var(--font-pixel)" }}
-                >
-                  {conversationDuration}
-                </p>
-              </div>
-              <div className="mt-auto grid grid-cols-3 gap-3 pt-8 text-[12px] text-[var(--text-muted)]">
-                <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
-                    started
-                  </p>
-                  <p className="mt-2 text-[var(--text-primary)]">{formatTime(startedAt)}</p>
-                </div>
-                <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
-                    last log
-                  </p>
-                  <p className="mt-2 text-[var(--text-primary)]">{formatTime(lastEventAt)}</p>
-                </div>
-                <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
-                    logs
-                  </p>
-                  <p className="mt-2 text-[var(--text-primary)]">{messages.length}</p>
-                </div>
-              </div>
-            </article>
-
-            <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <RuntimePulseIcon />
+              <article className="pixel-frame depth-panel flex h-full flex-col rounded-[22px] px-5 py-4">
+                <div>
                   <span
                     className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
                     style={{ fontFamily: "var(--font-pixel)" }}
                   >
-                    {"RUNTIME"}
+                    thread continuity
                   </span>
-                </div>
-              </div>
-              <div className="mt-6 space-y-5">
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
-                    Inference latency
-                  </span>
-                  <span className="text-[15px] font-semibold text-[var(--accent-green)]">
-                    340ms
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
-                    Context usage
-                  </span>
-                  <span className="text-[15px] font-semibold text-[var(--accent-amber)]">
-                    78%
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
-                    Active threads
-                  </span>
-                  <span className="text-[15px] font-semibold text-[var(--text-primary)]">
-                    14
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4 py-1">
-                  <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
-                    Memory heap
-                  </span>
-                  <span className="text-[15px] font-semibold text-[var(--text-primary)]">
-                    6.2 / 16 GB
-                  </span>
-                </div>
-              </div>
-            </article>
-
-            <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <MemoryLayerIcon />
-                  <span
-                    className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
+                  <p
+                    className="mt-6 text-[64px] leading-none text-[rgba(196,181,253,0.95)]"
                     style={{ fontFamily: "var(--font-pixel)" }}
                   >
-                    {"MEMORY"}
-                  </span>
+                    {conversationDuration}
+                  </p>
                 </div>
-              </div>
-              <div className="mt-5">
-                <div className="rounded-[1rem] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-4 py-4">
-                  <div className="flex items-start gap-4">
-                    <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[var(--accent-purple)]" />
-                    <p className="text-[15px] leading-8 text-[rgba(226,232,240,0.74)]">
-                      User prefers concise diagnostic format with bullet summaries and explicit
-                      numeric thresholds.
+                <div className="mt-auto grid grid-cols-3 gap-3 pt-8 text-[12px] text-[var(--text-muted)]">
+                  <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                      resumed
+                    </p>
+                    <p className="mt-2 text-[12px] leading-5 text-[var(--text-primary)]">
+                      {continuityTitle}
+                    </p>
+                  </div>
+                  <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                      last sync
+                    </p>
+                    <p className="mt-2 text-[12px] leading-5 text-[var(--text-primary)]">
+                      {formatTime(continuityLastSyncAt)}
+                    </p>
+                  </div>
+                  <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-3 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                      open loops
+                    </p>
+                    <p className="mt-2 text-[12px] leading-5 text-[var(--text-primary)]">
+                      {continuityOpenLoops.length}
                     </p>
                   </div>
                 </div>
-              </div>
-            </article>
+              </article>
+
+              <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <RuntimePulseIcon />
+                    <span
+                      className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
+                      style={{ fontFamily: "var(--font-pixel)" }}
+                    >
+                      STATE TRACE
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-6 space-y-5">
+                  <div className="rounded-[16px] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                      live state
+                    </p>
+                    <p className="mt-2 text-[15px] text-[var(--text-primary)]">{agentState}</p>
+                    <p className="mt-1 text-[12px] text-[var(--text-muted)]">
+                      runtime {health?.runtime_mode ?? "link-pending"}
+                    </p>
+                  </div>
+                  {stateTrace.map((step) => (
+                    <div key={step.key} className="flex items-center justify-between gap-4 py-1">
+                      <span className="text-[16px] tracking-[0.02em] text-[var(--text-muted)]">
+                        {step.label}
+                      </span>
+                      <span
+                        className={`text-[12px] font-semibold uppercase tracking-[0.16em] ${
+                          step.status === "done"
+                            ? "text-[var(--accent-green)]"
+                            : step.status === "active"
+                              ? "text-[var(--accent-amber)]"
+                              : "text-[var(--text-primary)]"
+                        }`}
+                      >
+                        {step.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="pixel-frame flex h-full flex-col rounded-[22px] border-[rgba(255,255,255,0.08)] bg-[linear-gradient(180deg,rgba(24,27,34,0.94),rgba(18,20,27,0.98))] px-5 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.3)]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <MemoryLayerIcon />
+                    <span
+                      className="text-[14px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
+                      style={{ fontFamily: "var(--font-pixel)" }}
+                    >
+                      MEMORY LEDGER
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-5 space-y-3">
+                  <div className="rounded-[1rem] border border-[rgba(168,85,247,0.14)] bg-[rgba(168,85,247,0.05)] px-4 py-4">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]">
+                      stable profile
+                    </p>
+                    <div className="mt-3 flex items-start gap-4">
+                      <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[var(--accent-purple)]" />
+                      <p className="text-[15px] leading-8 text-[rgba(226,232,240,0.74)]">
+                        {memorySignals[0] ?? "No durable user profile has been written yet."}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-[1rem] border border-[rgba(34,197,94,0.14)] bg-[rgba(34,197,94,0.05)] px-4 py-4">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--accent-green)]">
+                      recent learning
+                    </p>
+                    <p className="mt-3 text-[14px] leading-7 text-[rgba(226,232,240,0.74)]">
+                      {recentLearning}
+                    </p>
+                  </div>
+                  <div className="rounded-[1rem] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-4 py-4">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      active focus
+                    </p>
+                    <p className="mt-3 text-[14px] leading-7 text-[rgba(226,232,240,0.74)]">
+                      {activeFocus}
+                    </p>
+                    {activeSession?.path ? (
+                      <p className="mt-2 text-[11px] text-[var(--text-muted)]">
+                        source {activeSession.path}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="rounded-[1rem] border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] px-4 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">
+                      session source
+                    </p>
+                    <p className="mt-2 text-[13px] leading-6 text-[rgba(226,232,240,0.74)]">
+                      {sessions?.source ?? "Session index not loaded yet."}
+                    </p>
+                    {memory?.path ? (
+                      <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+                        memory {memory.path}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </article>
             </section>
           ) : null}
         </div>

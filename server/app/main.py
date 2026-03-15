@@ -87,6 +87,13 @@ class ChatResponse(BaseModel):
     request_id: str
     warnings: list[str] = Field(default_factory=list)
     generated_at: str
+    skill_invocation: Optional["SkillInvocation"] = None
+
+
+class SkillInvocation(BaseModel):
+    id: str
+    label: str
+    detail: str
 
 
 class SkillCard(BaseModel):
@@ -141,6 +148,12 @@ class HermesPaths:
     sessions_dir: Path
     skills_index: Path
     memory_candidates: tuple[Path, ...]
+
+
+PIXY_MEMORY_SENTINEL_START = "<!-- PIXY_RECENT_INTERACTIONS:START -->"
+PIXY_MEMORY_SENTINEL_END = "<!-- PIXY_RECENT_INTERACTIONS:END -->"
+PIXY_MEMORY_MAX_CONTEXT_CHARS = 4000
+PIXY_MEMORY_MAX_RECENT_ENTRIES = 8
 
 
 def now_iso() -> str:
@@ -202,11 +215,74 @@ def extract_summary(path: Path) -> str:
         raise StorageReadError(target="skill file", path=path, error=error) from error
 
 
+def strip_pixy_recent_section(content: str) -> str:
+    section_pattern = re.compile(
+        rf"(?:\n*## PIXY Recent Interactions\s*)+\n*{re.escape(PIXY_MEMORY_SENTINEL_START)}\n.*?\n{re.escape(PIXY_MEMORY_SENTINEL_END)}\s*",
+        flags=re.DOTALL,
+    )
+    cleaned = section_pattern.sub("\n", content)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def extract_cli_reply(cleaned_output: str) -> str:
+    response_match = re.findall(
+        r"╭─ ⚕ Hermes .*?╮\n(.*?)\n╰──────────────────────────────────────────────────────────────────────────────╯",
+        cleaned_output,
+        flags=re.DOTALL,
+    )
+    if response_match:
+        return response_match[-1].strip()
+
+    prefix = cleaned_output.split("Resume this session with:", maxsplit=1)[0]
+    banner_match = re.search(r"\n\s*─\s+⚕ Hermes .*?\n", prefix, flags=re.DOTALL)
+    if banner_match:
+        trailing = prefix[banner_match.end() :]
+        lines: list[str] = []
+        for raw_line in trailing.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            if stripped and all(char == "─" for char in stripped):
+                break
+            lines.append(stripped)
+        if lines:
+            return "\n".join(lines).strip()
+
+    after_query = cleaned_output.split("Query:", maxsplit=1)[-1]
+    return after_query.split("Resume this session with:", maxsplit=1)[0].strip()
+
+
 class HermesRuntime:
     def __init__(self) -> None:
         self._python_error: Optional[str] = None
         self._agent_class = self._load_agent_class()
-        self._cli_path = shutil.which(os.getenv("PIXY_HERMES_COMMAND", "hermes"))
+        self._cli_path = self._discover_cli_path()
+
+    def _discover_cli_path(self) -> Optional[str]:
+        env_command = os.getenv("PIXY_HERMES_COMMAND")
+        candidates = []
+        if env_command:
+            candidates.append(Path(env_command).expanduser())
+        which_path = shutil.which("hermes")
+        if which_path:
+            candidates.append(Path(which_path))
+        candidates.extend(
+            [
+                Path.home() / ".local" / "bin" / "hermes",
+                Path.home() / ".hermes" / "hermes-agent" / "hermes",
+            ]
+        )
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = str(candidate)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return normalized
+        return None
 
     def _load_agent_class(self) -> Optional[type[Any]]:
         candidates = (("run_agent", "AIAgent"), ("hermes.agent", "AIAgent"))
@@ -230,6 +306,8 @@ class HermesRuntime:
 
     @property
     def cli_available(self) -> bool:
+        if self._cli_path is None:
+            self._cli_path = self._discover_cli_path()
         return self._cli_path is not None
 
     @property
@@ -304,16 +382,7 @@ class HermesRuntime:
 
         cleaned_output = ANSI_RE.sub("", combined_output).replace("\r", "\n")
         cleaned_output = re.sub(r"\n{3,}", "\n\n", cleaned_output)
-
-        response_match = re.findall(
-            r"╭─ ⚕ Hermes .*?╮\n(.*?)\n╰──────────────────────────────────────────────────────────────────────────────╯",
-            cleaned_output,
-            flags=re.DOTALL,
-        )
-        reply = response_match[-1].strip() if response_match else ""
-        if not reply:
-            after_query = cleaned_output.split("Query:", maxsplit=1)[-1]
-            reply = after_query.split("Resume this session with:", maxsplit=1)[0].strip()
+        reply = extract_cli_reply(cleaned_output)
         if not reply:
             reply = "Hermes CLI completed without returning visible output."
 
@@ -423,11 +492,111 @@ def read_memory(paths: HermesPaths) -> MemoryResponse:
     return MemoryResponse(content=content, path=str(memory_path))
 
 
+def read_memory_text(paths: HermesPaths) -> str:
+    memory_path = resolve_memory_path(paths)
+    if memory_path is None:
+        return ""
+    try:
+        return memory_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise StorageReadError(target="memory file", path=memory_path, error=error) from error
+
+
+def memory_context_block(paths: HermesPaths) -> str:
+    content = read_memory_text(paths).strip()
+    if not content:
+        return ""
+    content = strip_pixy_recent_section(content)
+    return content[:PIXY_MEMORY_MAX_CONTEXT_CHARS]
+
+
+def wrap_message_with_memory(message: str, paths: HermesPaths) -> str:
+    memory_block = memory_context_block(paths)
+    if not memory_block:
+        return message
+    return (
+        "Persistent memory is mounted for this user. Use it only when relevant, "
+        "and do not restate it unless it matters.\n\n"
+        f"{memory_block}\n\n"
+        "Current user message:\n"
+        f"{message}"
+    )
+
+
+def _recent_memory_entry(timestamp: str, session_id: str, user_message: str, reply: str) -> str:
+    user_preview = " ".join(user_message.split())[:220]
+    reply_preview = " ".join(reply.split())[:280]
+    return (
+        f"- {timestamp} · session `{session_id}`\n"
+        f"  user: {user_preview}\n"
+        f"  assistant: {reply_preview}"
+    )
+
+
+def write_memory_snapshot(paths: HermesPaths, *, session_id: str, user_message: str, reply: str) -> None:
+    memory_path = resolve_memory_path(paths) or paths.home / "memories" / "MEMORY.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = memory_path.read_text(encoding="utf-8") if memory_path.exists() else "# MEMORY\n\n"
+    except OSError as error:
+        raise StorageReadError(target="memory file", path=memory_path, error=error) from error
+
+    entry = _recent_memory_entry(now_iso(), session_id, user_message, reply)
+    recent_entries: list[str] = [entry]
+    pattern = re.compile(
+        rf"{re.escape(PIXY_MEMORY_SENTINEL_START)}\n(.*?)\n{re.escape(PIXY_MEMORY_SENTINEL_END)}",
+        flags=re.DOTALL,
+    )
+    match = pattern.search(existing)
+    if match:
+        block = match.group(1).strip()
+        if block:
+            raw_entries = [segment.strip() for segment in block.split("\n- ") if segment.strip()]
+            for index, raw_entry in enumerate(raw_entries):
+                normalized = raw_entry if index == 0 or raw_entry.startswith("- ") else f"- {raw_entry}"
+                recent_entries.append(normalized)
+        base = strip_pixy_recent_section(existing)
+    else:
+        base = strip_pixy_recent_section(existing)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in recent_entries:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    deduped = deduped[:PIXY_MEMORY_MAX_RECENT_ENTRIES]
+
+    recent_body = "\n\n".join(deduped)
+    recent_section = (
+        "## PIXY Recent Interactions\n\n"
+        f"{PIXY_MEMORY_SENTINEL_START}\n"
+        f"{recent_body}\n"
+        f"{PIXY_MEMORY_SENTINEL_END}"
+    )
+    base = base or "# MEMORY"
+    payload = f"{base}\n\n{recent_section}\n"
+    try:
+        memory_path.write_text(payload, encoding="utf-8")
+    except OSError as error:
+        raise StorageReadError(target="memory file", path=memory_path, error=error) from error
+
+
+def unwrap_memory_wrapped_message(message: Any) -> str:
+    if not isinstance(message, str):
+        return ""
+    marker = "Current user message:\n"
+    if marker in message:
+        return message.split(marker, maxsplit=1)[-1].strip()
+    return message.strip()
+
+
 def session_title(entry: dict[str, Any]) -> str:
     messages = entry.get("messages") or []
     for message in messages:
         if message.get("role") == "user" and message.get("content"):
-            return str(message["content"]).strip()[:80]
+            return unwrap_memory_wrapped_message(message["content"])[:80]
     return f"Session {entry.get('session_id', 'unknown')}"
 
 
@@ -437,6 +606,122 @@ def session_preview(entry: dict[str, Any]) -> str:
         if message.get("role") == "assistant" and message.get("content"):
             return str(message["content"]).strip()[:180]
     return "No assistant response recorded yet."
+
+
+def session_exists(paths: HermesPaths, session_id: Optional[str]) -> bool:
+    if not session_id:
+        return False
+    return (paths.sessions_dir / f"session_{session_id}.json").exists()
+
+
+def latest_session_id(paths: HermesPaths) -> Optional[str]:
+    if not paths.sessions_dir.exists():
+        return None
+    latest = next(
+        iter(sorted(paths.sessions_dir.glob("session_*.json"), key=lambda item: item.stat().st_mtime, reverse=True)),
+        None,
+    )
+    if latest is None:
+        return None
+    entry = read_json(latest)
+    if isinstance(entry, dict) and entry.get("session_id"):
+        return str(entry["session_id"])
+    return latest.stem.replace("session_", "")
+
+
+def parse_installed_skills(output: str) -> list[dict[str, str]]:
+    skills: list[dict[str, str]] = []
+    for raw_line in output.splitlines():
+        line = ANSI_RE.sub("", raw_line).rstrip()
+        if not line.startswith("│") or line.count("│") < 5:
+            continue
+        cells = [cell.strip() for cell in line.strip("│").split("│")]
+        if len(cells) != 4:
+            continue
+        name, category, source, trust = cells
+        if name in {"Name", ""}:
+            continue
+        skills.append(
+            {
+                "name": name,
+                "category": category or "general",
+                "source": source or "unknown",
+                "trust": trust or "unknown",
+            }
+        )
+    return skills
+
+
+def handle_skill_command(
+    runtime: HermesRuntime,
+    paths: HermesPaths,
+    *,
+    message: str,
+    session_id: Optional[str],
+    request_id: str,
+) -> Optional[ChatResponse]:
+    normalized = message.strip()
+    matches = re.match(r"^/(?:skill|skills)\s+list(?:\s+(.*))?$", normalized, flags=re.IGNORECASE)
+    if not matches:
+        return None
+    if not runtime.cli_available or not runtime._cli_path:
+        raise HermesExecutionError(RuntimeError("Hermes CLI is not available for skills list."))
+
+    query = (matches.group(1) or "").strip().lower()
+    try:
+        completed = subprocess.run(
+            [runtime._cli_path, "skills", "list"],
+            capture_output=True,
+            text=True,
+            timeout=int(os.getenv("PIXY_HERMES_TIMEOUT", "300")),
+            check=False,
+        )
+    except Exception as error:
+        raise HermesExecutionError(error, details={"command": [runtime._cli_path, "skills", "list"]}) from error
+
+    if completed.returncode != 0:
+        raise HermesExecutionError(
+            RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "Hermes skills list failed."),
+            details={"command": [runtime._cli_path, "skills", "list"], "exit_code": completed.returncode},
+        )
+
+    installed = parse_installed_skills(completed.stdout)
+    filtered = [
+        skill
+        for skill in installed
+        if not query
+        or query in skill["name"].lower()
+        or query in skill["category"].lower()
+        or query in skill["source"].lower()
+    ]
+    visible = filtered[:12]
+    if visible:
+        bullets = "\n".join(
+            f"- `{skill['name']}` · {skill['category']} · {skill['source']} / {skill['trust']}"
+            for skill in visible
+        )
+        reply = (
+            f"Installed skill matches: {len(filtered)}"
+            + (f" for `{query}`" if query else "")
+            + "\n\n"
+            + bullets
+        )
+    else:
+        reply = f"No installed skills matched `{query}`."
+
+    effective_session_id = session_id or latest_session_id(paths) or "new-thread"
+    return ChatResponse(
+        reply=reply,
+        session_id=effective_session_id,
+        mode="cli",
+        request_id=request_id,
+        generated_at=now_iso(),
+        skill_invocation=SkillInvocation(
+            id="skills.list",
+            label="skills.list",
+            detail=f"{len(filtered)} match(es)" + (f" for {query}" if query else ""),
+        ),
+    )
 
 
 def list_sessions(paths: HermesPaths) -> SessionsResponse:
@@ -537,11 +822,40 @@ def create_app() -> FastAPI:
     async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
         if not payload.message.strip():
             raise InvalidMessageError()
-        return runtime.chat(
-            payload.message.strip(),
-            payload.session_id,
+        paths = resolve_paths()
+        raw_message = payload.message.strip()
+        skill_response = handle_skill_command(
+            runtime,
+            paths,
+            message=raw_message,
+            session_id=payload.session_id,
             request_id=request_id_from(request),
         )
+        if skill_response is not None:
+            write_memory_snapshot(
+                paths,
+                session_id=skill_response.session_id,
+                user_message=raw_message,
+                reply=skill_response.reply,
+            )
+            return skill_response
+        resume_session_id = payload.session_id if session_exists(paths, payload.session_id) else None
+        response = runtime.chat(
+            wrap_message_with_memory(raw_message, paths),
+            resume_session_id,
+            request_id=request_id_from(request),
+        )
+        if payload.session_id and resume_session_id is None:
+            response.warnings.append(
+                f"Requested session `{payload.session_id}` was not found, so Hermes started a new session."
+            )
+        write_memory_snapshot(
+            paths,
+            session_id=response.session_id,
+            user_message=raw_message,
+            reply=response.reply,
+        )
+        return response
 
     @app.get("/skills", response_model=SkillsResponse)
     async def skills() -> SkillsResponse:
