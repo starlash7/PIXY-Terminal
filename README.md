@@ -5,6 +5,10 @@
 </p>
 
 <p align="center">
+  Hermes Agent · FastAPI · Next.js · Local-first
+</p>
+
+<p align="center">
   Persistent Hermes companion terminal for chat, memory, session continuity, and skill execution.
 </p>
 
