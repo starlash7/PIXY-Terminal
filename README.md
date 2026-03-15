@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img alt="Hermes Runtime" src="https://img.shields.io/badge/Hermes-Runtime-111111?style=flat-square&logo=gnubash&logoColor=white" />
+  <img src="./design/assets/hermes-agent-wordmark.png" alt="Hermes Agent" height="20" />
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0EA5A4?style=flat-square&logo=fastapi&logoColor=white" />
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-111111?style=flat-square&logo=next.js&logoColor=white" />
 </p>
