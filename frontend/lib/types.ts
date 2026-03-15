@@ -53,9 +53,20 @@ export type SessionCard = {
   preview: string;
 };
 
+export type SessionMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
 export type SessionsResponse = {
   sessions: SessionCard[];
   source: string;
+};
+
+export type SessionDetailResponse = SessionCard & {
+  messages: SessionMessage[];
 };
 
 export type HealthResponse = {

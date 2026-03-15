@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -54,6 +54,16 @@ class StorageReadError(ApiError):
             message=f"Failed to read {target}.",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             details={"path": str(path), "reason": str(error)},
+        )
+
+
+class SessionNotFoundError(ApiError):
+    def __init__(self, *, session_id: str) -> None:
+        super().__init__(
+            code="session_not_found",
+            message=f"Session `{session_id}` was not found.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            details={"session_id": session_id},
         )
 
 
@@ -122,6 +132,17 @@ class SessionCard(BaseModel):
     last_updated: str
     message_count: int
     preview: str
+
+
+class SessionMessage(BaseModel):
+    id: str
+    role: str
+    content: str
+    created_at: str
+
+
+class SessionDetailResponse(SessionCard):
+    messages: list[SessionMessage]
 
 
 class SessionsResponse(BaseModel):
@@ -614,6 +635,13 @@ def session_exists(paths: HermesPaths, session_id: Optional[str]) -> bool:
     return (paths.sessions_dir / f"session_{session_id}.json").exists()
 
 
+def session_path(paths: HermesPaths, session_id: str) -> Path:
+    path = paths.sessions_dir / f"session_{session_id}.json"
+    if path.exists():
+        return path
+    raise SessionNotFoundError(session_id=session_id)
+
+
 def latest_session_id(paths: HermesPaths) -> Optional[str]:
     if not paths.sessions_dir.exists():
         return None
@@ -627,6 +655,49 @@ def latest_session_id(paths: HermesPaths) -> Optional[str]:
     if isinstance(entry, dict) and entry.get("session_id"):
         return str(entry["session_id"])
     return latest.stem.replace("session_", "")
+
+
+def parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def list_session_messages(entry: dict[str, Any]) -> list[SessionMessage]:
+    messages = entry.get("messages") or []
+    if not isinstance(messages, list):
+        return []
+
+    start_dt = parse_iso_datetime(entry.get("session_start")) or datetime.now(timezone.utc)
+    end_dt = parse_iso_datetime(entry.get("last_updated")) or start_dt
+    span_seconds = max(0.0, (end_dt - start_dt).total_seconds())
+    total = max(1, len(messages) - 1)
+
+    session_messages: list[SessionMessage] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "assistant").strip()
+        content = str(message.get("content") or "").strip()
+        if role == "user":
+            content = unwrap_memory_wrapped_message(content)
+        if role not in {"user", "assistant"} or not content:
+            continue
+        created_dt = start_dt + timedelta(seconds=(span_seconds * index / total))
+        session_messages.append(
+            SessionMessage(
+                id=f"{entry.get('session_id', 'session')}-{index}",
+                role=role,
+                content=content,
+                created_at=created_dt.isoformat(),
+            )
+        )
+    return session_messages
 
 
 def parse_installed_skills(output: str) -> list[dict[str, str]]:
@@ -661,53 +732,80 @@ def handle_skill_command(
     request_id: str,
 ) -> Optional[ChatResponse]:
     normalized = message.strip()
-    matches = re.match(r"^/(?:skill|skills)\s+list(?:\s+(.*))?$", normalized, flags=re.IGNORECASE)
-    if not matches:
+    list_matches = re.match(r"^/(?:skill|skills)\s+list(?:\s+(.*))?$", normalized, flags=re.IGNORECASE)
+    inspect_matches = re.match(r"^/(?:skill|skills)\s+inspect\s+([\w.-]+)$", normalized, flags=re.IGNORECASE)
+    if not list_matches and not inspect_matches:
         return None
     if not runtime.cli_available or not runtime._cli_path:
-        raise HermesExecutionError(RuntimeError("Hermes CLI is not available for skills list."))
+        raise HermesExecutionError(RuntimeError("Hermes CLI is not available for skill commands."))
 
-    query = (matches.group(1) or "").strip().lower()
+    command: list[str]
+    query = ""
+    if list_matches:
+        query = (list_matches.group(1) or "").strip().lower()
+        command = [runtime._cli_path, "skills", "list"]
+        invocation = SkillInvocation(
+            id="skills.list",
+            label="skills.list",
+            detail="listing installed skills",
+        )
+        fallback_error = "Hermes skills list failed."
+    else:
+        skill_name = inspect_matches.group(1).strip()
+        query = skill_name.lower()
+        command = [runtime._cli_path, "skills", "inspect", skill_name]
+        invocation = SkillInvocation(
+            id="skills.inspect",
+            label="skills.inspect",
+            detail=skill_name,
+        )
+        fallback_error = f"Hermes skills inspect failed for {skill_name}."
+
     try:
         completed = subprocess.run(
-            [runtime._cli_path, "skills", "list"],
+            command,
             capture_output=True,
             text=True,
             timeout=int(os.getenv("PIXY_HERMES_TIMEOUT", "300")),
             check=False,
         )
     except Exception as error:
-        raise HermesExecutionError(error, details={"command": [runtime._cli_path, "skills", "list"]}) from error
+        raise HermesExecutionError(error, details={"command": command}) from error
 
     if completed.returncode != 0:
         raise HermesExecutionError(
-            RuntimeError(completed.stderr.strip() or completed.stdout.strip() or "Hermes skills list failed."),
-            details={"command": [runtime._cli_path, "skills", "list"], "exit_code": completed.returncode},
+            RuntimeError(completed.stderr.strip() or completed.stdout.strip() or fallback_error),
+            details={"command": command, "exit_code": completed.returncode},
         )
 
-    installed = parse_installed_skills(completed.stdout)
-    filtered = [
-        skill
-        for skill in installed
-        if not query
-        or query in skill["name"].lower()
-        or query in skill["category"].lower()
-        or query in skill["source"].lower()
-    ]
-    visible = filtered[:12]
-    if visible:
-        bullets = "\n".join(
-            f"- `{skill['name']}` · {skill['category']} · {skill['source']} / {skill['trust']}"
-            for skill in visible
-        )
-        reply = (
-            f"Installed skill matches: {len(filtered)}"
-            + (f" for `{query}`" if query else "")
-            + "\n\n"
-            + bullets
-        )
+    if list_matches:
+        installed = parse_installed_skills(completed.stdout)
+        filtered = [
+            skill
+            for skill in installed
+            if not query
+            or query in skill["name"].lower()
+            or query in skill["category"].lower()
+            or query in skill["source"].lower()
+        ]
+        visible = filtered[:12]
+        if visible:
+            bullets = "\n".join(
+                f"- `{skill['name']}` · {skill['category']} · {skill['source']} / {skill['trust']}"
+                for skill in visible
+            )
+            reply = (
+                f"Installed skill matches: {len(filtered)}"
+                + (f" for `{query}`" if query else "")
+                + "\n\n"
+                + bullets
+            )
+        else:
+            reply = f"No installed skills matched `{query}`."
+        invocation.detail = f"{len(filtered)} match(es)" + (f" for {query}" if query else "")
     else:
-        reply = f"No installed skills matched `{query}`."
+        cleaned = ANSI_RE.sub("", "\n".join(part for part in (completed.stdout, completed.stderr) if part)).strip()
+        reply = f"```text\n{cleaned[:5000]}\n```"
 
     effective_session_id = session_id or latest_session_id(paths) or "new-thread"
     return ChatResponse(
@@ -716,11 +814,7 @@ def handle_skill_command(
         mode="cli",
         request_id=request_id,
         generated_at=now_iso(),
-        skill_invocation=SkillInvocation(
-            id="skills.list",
-            label="skills.list",
-            detail=f"{len(filtered)} match(es)" + (f" for {query}" if query else ""),
-        ),
+        skill_invocation=invocation,
     )
 
 
@@ -745,6 +839,22 @@ def list_sessions(paths: HermesPaths) -> SessionsResponse:
         )
 
     return SessionsResponse(sessions=sessions, source=str(paths.sessions_dir))
+
+
+def get_session_detail(paths: HermesPaths, session_id: str) -> SessionDetailResponse:
+    path = session_path(paths, session_id)
+    entry = read_json(path)
+    if not isinstance(entry, dict):
+        raise SessionNotFoundError(session_id=session_id)
+    return SessionDetailResponse(
+        id=str(entry.get("session_id") or session_id),
+        title=session_title(entry),
+        path=str(path),
+        last_updated=str(entry.get("last_updated") or file_timestamp(path)),
+        message_count=int(entry.get("message_count") or len(entry.get("messages") or [])),
+        preview=session_preview(entry),
+        messages=list_session_messages(entry),
+    )
 
 
 def create_app() -> FastAPI:
@@ -868,6 +978,10 @@ def create_app() -> FastAPI:
     @app.get("/sessions", response_model=SessionsResponse)
     async def sessions() -> SessionsResponse:
         return list_sessions(resolve_paths())
+
+    @app.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+    async def session_detail(session_id: str) -> SessionDetailResponse:
+        return get_session_detail(resolve_paths(), session_id)
 
     return app
 

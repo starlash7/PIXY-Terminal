@@ -11,6 +11,7 @@ import type {
   ChatResponse,
   HealthResponse,
   MemoryResponse,
+  SessionDetailResponse,
   SkillInvocation,
   SessionsResponse,
 } from "@/lib/types";
@@ -50,14 +51,6 @@ function resolveTimestamp(value: number | string | null | undefined): number | n
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-}
-
-function formatDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  return `${minutes.toString().padStart(2, "0")}m ${seconds.toString().padStart(2, "0")}s`;
 }
 
 function normalizeLine(line: string): string {
@@ -209,6 +202,7 @@ export function ChatWorkspace() {
   const thinkingTimeoutRef = useRef<number | null>(null);
   const settleTimeoutRef = useRef<number | null>(null);
   const lastThoughtTextRef = useRef<string | null>(null);
+  const hydratedSessionRef = useRef<string | null>(null);
 
   async function refreshContext() {
     const [healthResult, memoryResult, sessionsResult] = await Promise.allSettled([
@@ -232,6 +226,35 @@ export function ChatWorkspace() {
   useEffect(() => {
     void refreshContext().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!sessionId || messages.length > 0 || hydratedSessionRef.current === sessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getJson<SessionDetailResponse>(`/api/sessions/${sessionId}`)
+      .then((detail) => {
+        if (cancelled) {
+          return;
+        }
+        hydratedSessionRef.current = sessionId;
+        setMessages(
+          detail.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content,
+            createdAt: resolveTimestamp(message.created_at) ?? Date.now(),
+          })),
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages.length, sessionId]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -325,6 +348,7 @@ export function ChatWorkspace() {
           },
         ]);
         setSessionId(response.session_id);
+        hydratedSessionRef.current = response.session_id;
         setWarnings(response.warnings);
       });
       clearTimeoutRef(thinkingTimeoutRef);
@@ -360,7 +384,6 @@ export function ChatWorkspace() {
 
   const startedAt = messages[0]?.createdAt ?? Date.now();
   const lastEventAt = messages[messages.length - 1]?.createdAt ?? startedAt;
-  const conversationDuration = formatDuration(lastEventAt - startedAt);
   const showWindowBody = windowMode !== "minimized";
   const showDock = windowMode === "windowed";
   const pagePaddingClass = windowMode === "maximized" ? "px-0 py-0" : "px-6 py-6";
@@ -403,6 +426,7 @@ export function ChatWorkspace() {
     ? summarizeText(activeSession.title, 44)
     : shortSessionLabel(continuitySessionId);
   const continuityPreview = activeSession?.preview ? summarizeText(activeSession.preview, 40) : null;
+  const continuityMetricValue = String(activeSession?.message_count ?? messages.length).padStart(2, "0");
   const latestAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
   const stateTrace = buildStateTrace(agentState, isSending, warnings.length > 0 || Boolean(error));
   const recentLearning =
@@ -708,11 +732,14 @@ export function ChatWorkspace() {
                   >
                     thread continuity
                   </span>
+                  <p className="mt-6 text-[64px] leading-none text-[rgba(196,181,253,0.95)]">
+                    {continuityMetricValue}
+                  </p>
                   <p
-                    className="mt-6 text-[64px] leading-none text-[rgba(196,181,253,0.95)]"
+                    className="mt-3 text-[10px] uppercase tracking-[0.18em] text-[var(--accent-purple)]"
                     style={{ fontFamily: "var(--font-pixel)" }}
                   >
-                    {conversationDuration}
+                    messages
                   </p>
                 </div>
                 <div className="mt-auto grid grid-cols-3 gap-3 pt-8 text-[12px] text-[var(--text-muted)]">
