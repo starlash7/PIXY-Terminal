@@ -98,6 +98,7 @@ class ChatResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     generated_at: str
     skill_invocation: Optional["SkillInvocation"] = None
+    memory_evidence: list[str] = Field(default_factory=list)
 
 
 class SkillInvocation(BaseModel):
@@ -274,6 +275,13 @@ def extract_cli_reply(cleaned_output: str) -> str:
     return after_query.split("Resume this session with:", maxsplit=1)[0].strip()
 
 
+def extract_cli_session_id(cleaned_output: str, fallback_session_id: Optional[str]) -> str:
+    session_match = re.search(r"hermes --resume ([^\s]+)", cleaned_output)
+    if session_match:
+        return session_match.group(1)
+    return fallback_session_id or uuid4().hex[:12]
+
+
 class HermesRuntime:
     def __init__(self) -> None:
         self._python_error: Optional[str] = None
@@ -406,9 +414,7 @@ class HermesRuntime:
         reply = extract_cli_reply(cleaned_output)
         if not reply:
             reply = "Hermes CLI completed without returning visible output."
-
-        session_match = re.search(r"hermes --resume ([^\s]+)", cleaned_output)
-        actual_session_id = session_match.group(1) if session_match else (session_id or uuid4().hex[:12])
+        actual_session_id = extract_cli_session_id(cleaned_output, session_id)
 
         return ChatResponse(
             reply=reply,
@@ -471,6 +477,32 @@ runtime = HermesRuntime()
 
 
 def list_skills(paths: HermesPaths) -> SkillsResponse:
+    if runtime.cli_available and runtime._cli_path:
+        try:
+            completed = subprocess.run(
+                [runtime._cli_path, "skills", "list"],
+                capture_output=True,
+                text=True,
+                timeout=int(os.getenv("PIXY_HERMES_TIMEOUT", "300")),
+                check=False,
+            )
+        except Exception as error:
+            raise HermesExecutionError(error, details={"command": [runtime._cli_path, "skills", "list"]}) from error
+
+        if completed.returncode == 0:
+            installed = parse_installed_skills(completed.stdout)
+            cards = [
+                SkillCard(
+                    id=skill["name"],
+                    title=skill["name"],
+                    path=f"{skill['source']}::{skill['name']}",
+                    summary=f"{skill['category']} · source {skill['source']} · trust {skill['trust']}",
+                    last_updated=now_iso(),
+                )
+                for skill in installed
+            ]
+            return SkillsResponse(skills=cards, source="hermes-cli")
+
     if not paths.skills_dir.exists():
         return SkillsResponse(skills=[], source=str(paths.skills_dir))
 
@@ -529,6 +561,18 @@ def memory_context_block(paths: HermesPaths) -> str:
         return ""
     content = strip_pixy_recent_section(content)
     return content[:PIXY_MEMORY_MAX_CONTEXT_CHARS]
+
+
+def extract_memory_evidence(paths: HermesPaths) -> list[str]:
+    evidence: list[str] = []
+    for raw_line in memory_context_block(paths).splitlines():
+        line = raw_line.strip()
+        if not line.startswith("- "):
+            continue
+        normalized = line[2:].strip()
+        if normalized and normalized not in evidence:
+            evidence.append(normalized[:140])
+    return evidence[:3]
 
 
 def wrap_message_with_memory(message: str, paths: HermesPaths) -> str:
@@ -734,7 +778,12 @@ def handle_skill_command(
     normalized = message.strip()
     list_matches = re.match(r"^/(?:skill|skills)\s+list(?:\s+(.*))?$", normalized, flags=re.IGNORECASE)
     inspect_matches = re.match(r"^/(?:skill|skills)\s+inspect\s+([\w.-]+)$", normalized, flags=re.IGNORECASE)
-    if not list_matches and not inspect_matches:
+    run_matches = re.match(
+        r"^/(?:skill|skills)\s+run\s+([\w.-]+)\s*::\s*(.+)$",
+        normalized,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not list_matches and not inspect_matches and not run_matches:
         return None
     if not runtime.cli_available or not runtime._cli_path:
         raise HermesExecutionError(RuntimeError("Hermes CLI is not available for skill commands."))
@@ -750,7 +799,7 @@ def handle_skill_command(
             detail="listing installed skills",
         )
         fallback_error = "Hermes skills list failed."
-    else:
+    elif inspect_matches:
         skill_name = inspect_matches.group(1).strip()
         query = skill_name.lower()
         command = [runtime._cli_path, "skills", "inspect", skill_name]
@@ -760,6 +809,20 @@ def handle_skill_command(
             detail=skill_name,
         )
         fallback_error = f"Hermes skills inspect failed for {skill_name}."
+    else:
+        skill_name = run_matches.group(1).strip()
+        skill_prompt = run_matches.group(2).strip()
+        resume_session_id = session_id if session_exists(paths, session_id) else None
+        command = [runtime._cli_path, "chat"]
+        if resume_session_id:
+            command.extend(["--resume", resume_session_id])
+        command.extend(["-s", skill_name, "-q", skill_prompt])
+        invocation = SkillInvocation(
+            id="skills.run",
+            label="skills.run",
+            detail=skill_name,
+        )
+        fallback_error = f"Hermes skills run failed for {skill_name}."
 
     try:
         completed = subprocess.run(
@@ -803,11 +866,18 @@ def handle_skill_command(
         else:
             reply = f"No installed skills matched `{query}`."
         invocation.detail = f"{len(filtered)} match(es)" + (f" for {query}" if query else "")
-    else:
+    elif inspect_matches:
         cleaned = ANSI_RE.sub("", "\n".join(part for part in (completed.stdout, completed.stderr) if part)).strip()
         reply = f"```text\n{cleaned[:5000]}\n```"
+    else:
+        cleaned_output = ANSI_RE.sub("", "\n".join(part for part in (completed.stdout, completed.stderr) if part))
+        cleaned_output = cleaned_output.replace("\r", "\n")
+        cleaned_output = re.sub(r"\n{3,}", "\n\n", cleaned_output)
+        reply = extract_cli_reply(cleaned_output) or "Hermes skill run completed without visible output."
 
-    effective_session_id = session_id or latest_session_id(paths) or "new-thread"
+    effective_session_id = (
+        extract_cli_session_id(cleaned_output, session_id) if run_matches else session_id or latest_session_id(paths) or "new-thread"
+    )
     return ChatResponse(
         reply=reply,
         session_id=effective_session_id,
@@ -934,6 +1004,7 @@ def create_app() -> FastAPI:
             raise InvalidMessageError()
         paths = resolve_paths()
         raw_message = payload.message.strip()
+        memory_evidence = extract_memory_evidence(paths)
         skill_response = handle_skill_command(
             runtime,
             paths,
@@ -942,6 +1013,7 @@ def create_app() -> FastAPI:
             request_id=request_id_from(request),
         )
         if skill_response is not None:
+            skill_response.memory_evidence = memory_evidence
             write_memory_snapshot(
                 paths,
                 session_id=skill_response.session_id,
@@ -955,6 +1027,7 @@ def create_app() -> FastAPI:
             resume_session_id,
             request_id=request_id_from(request),
         )
+        response.memory_evidence = memory_evidence
         if payload.session_id and resume_session_id is None:
             response.warnings.append(
                 f"Requested session `{payload.session_id}` was not found, so Hermes started a new session."

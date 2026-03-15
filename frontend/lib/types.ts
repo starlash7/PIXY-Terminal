@@ -23,6 +23,7 @@ export type ChatResponse = {
   warnings: string[];
   generated_at: string;
   skill_invocation?: SkillInvocation | null;
+  memory_evidence: string[];
 };
 
 export type SkillCard = {

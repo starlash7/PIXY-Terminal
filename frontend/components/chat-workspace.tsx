@@ -22,6 +22,7 @@ type Message = {
   content: string;
   createdAt: number;
   skillInvocation?: SkillInvocation | null;
+  memoryEvidence?: string[] | null;
 };
 
 type WindowMode = "windowed" | "maximized" | "minimized";
@@ -193,6 +194,7 @@ export function ChatWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [windowMode, setWindowMode] = useState<WindowMode>("windowed");
+  const [threadMode, setThreadMode] = useState<"resume" | "new">("resume");
   const [agentState, setAgentState] = useState<AgentState>("idle");
   const [thoughtCue, setThoughtCue] = useState<ThoughtCue | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -219,13 +221,22 @@ export function ChatWorkspace() {
     }
     if (sessionsResult.status === "fulfilled") {
       setSessions(sessionsResult.value);
-      setSessionId((current) => current ?? sessionsResult.value.sessions[0]?.id ?? null);
     }
   }
 
   useEffect(() => {
     void refreshContext().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (threadMode === "new" || sessionId || messages.length > 0) {
+      return;
+    }
+    const latestSessionId = sessions?.sessions[0]?.id ?? null;
+    if (latestSessionId) {
+      setSessionId(latestSessionId);
+    }
+  }, [messages.length, sessionId, sessions, threadMode]);
 
   useEffect(() => {
     if (!sessionId || messages.length > 0 || hydratedSessionRef.current === sessionId) {
@@ -301,6 +312,20 @@ export function ChatWorkspace() {
     }, durationMs);
   }
 
+  function switchThread(nextSessionId: string | null) {
+    hydratedSessionRef.current = null;
+    clearTimeoutRef(thoughtTimeoutRef);
+    clearTimeoutRef(thinkingTimeoutRef);
+    clearTimeoutRef(settleTimeoutRef);
+    setMessages([]);
+    setWarnings([]);
+    setError(null);
+    setThoughtCue(null);
+    setAgentState("idle");
+    setSessionId(nextSessionId);
+    setThreadMode(nextSessionId ? "resume" : "new");
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -345,10 +370,12 @@ export function ChatWorkspace() {
             content: response.reply,
             createdAt: Date.now(),
             skillInvocation: response.skill_invocation ?? null,
+            memoryEvidence: response.memory_evidence ?? [],
           },
         ]);
         setSessionId(response.session_id);
         hydratedSessionRef.current = response.session_id;
+        setThreadMode("resume");
         setWarnings(response.warnings);
       });
       clearTimeoutRef(thinkingTimeoutRef);
@@ -405,7 +432,9 @@ export function ChatWorkspace() {
       : "rounded-[28px]";
   const memorySignals = extractMemorySignals(memory?.content);
   const activeSession =
-    sessions?.sessions.find((entry) => entry.id === sessionId) ?? sessions?.sessions[0] ?? null;
+    threadMode === "new"
+      ? (sessionId ? sessions?.sessions.find((entry) => entry.id === sessionId) ?? null : null)
+      : sessions?.sessions.find((entry) => entry.id === sessionId) ?? sessions?.sessions[0] ?? null;
   const openLoops = extractOpenLoops(messages, warnings);
   const continuityOpenLoops =
     openLoops.length > 0
@@ -421,11 +450,16 @@ export function ChatWorkspace() {
   ) ?? lastEventAt;
   const continuityTitle = activeSession?.title
     ? summarizeText(activeSession.title, 26)
-    : shortSessionLabel(continuitySessionId);
+    : threadMode === "new"
+      ? "new thread"
+      : shortSessionLabel(continuitySessionId);
   const continuityHeadline = activeSession?.title
     ? summarizeText(activeSession.title, 44)
-    : shortSessionLabel(continuitySessionId);
+    : threadMode === "new"
+      ? "new thread"
+      : shortSessionLabel(continuitySessionId);
   const continuityPreview = activeSession?.preview ? summarizeText(activeSession.preview, 40) : null;
+  const continuityVerb = threadMode === "new" ? "Starting" : "Resumed";
   const continuityMetricValue = String(activeSession?.message_count ?? messages.length).padStart(2, "0");
   const latestAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
   const stateTrace = buildStateTrace(agentState, isSending, warnings.length > 0 || Boolean(error));
@@ -529,6 +563,19 @@ export function ChatWorkspace() {
                 >
                   skills
                 </Link>
+                <select
+                  value={threadMode === "new" ? "" : continuitySessionId ?? ""}
+                  onChange={(event) => switchThread(event.target.value || null)}
+                  className="h-8 min-w-[12rem] rounded-full border border-[var(--border-default)] bg-[rgba(12,12,12,0.72)] px-3 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)] outline-none"
+                  style={{ fontFamily: "var(--font-pixel)" }}
+                >
+                  <option value="">new thread</option>
+                  {sessions?.sessions.slice(0, 8).map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {summarizeText(entry.title, 28)}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -555,7 +602,7 @@ export function ChatWorkspace() {
                                 thread continuity
                               </span>
                               <p className="mt-2 text-[15px] leading-7 text-[var(--text-primary)]">
-                                Resumed{" "}
+                                {continuityVerb}{" "}
                                 <span className="text-[rgba(196,181,253,0.95)]">
                                   {continuityHeadline}
                                 </span>
@@ -638,7 +685,9 @@ export function ChatWorkspace() {
                                     <span className="rounded-full border border-[rgba(168,85,247,0.18)] bg-[rgba(168,85,247,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
                                       session {shortSessionLabel(sessionId)}
                                     </span>
-                                    {memorySignals.slice(0, 2).map((signal) => (
+                                    {(message.memoryEvidence?.length ? message.memoryEvidence : memorySignals)
+                                      .slice(0, 2)
+                                      .map((signal) => (
                                       <span
                                         key={signal}
                                         className="rounded-full border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-[var(--accent-green)]"
