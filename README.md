@@ -20,6 +20,10 @@ PIXY TERMINAL is a local browser shell for Hermes Agent. It is built for one thi
 
 The chat stays primary, but the runtime truth stays visible too. PIXY shows whether Hermes is live or degraded, what memory is mounted, which session is active, and which skill was invoked. If Hermes is unavailable, the app drops into explicit simulator mode instead of failing silently.
 
+<p align="center">
+  <img src="./design/assets/terminal-preview.png" alt="PIXY Terminal preview" width="960" />
+</p>
+
 ## Features
 
 - Persistent chat: resume the latest Hermes thread and hydrate prior transcript directly into the chat window

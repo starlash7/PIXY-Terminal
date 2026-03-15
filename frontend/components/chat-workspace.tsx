@@ -36,6 +36,9 @@ function clearTimeoutRef(timeoutRef: React.MutableRefObject<number | null>) {
 }
 
 function formatTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return "--:--:--";
+  }
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",
     minute: "2-digit",
@@ -256,7 +259,7 @@ export function ChatWorkspace() {
             id: message.id,
             role: message.role,
             content: message.content,
-            createdAt: resolveTimestamp(message.created_at) ?? Date.now(),
+            createdAt: resolveTimestamp(message.created_at) ?? 0,
           })),
         );
       })
@@ -409,8 +412,6 @@ export function ChatWorkspace() {
     }
   }
 
-  const startedAt = messages[0]?.createdAt ?? Date.now();
-  const lastEventAt = messages[messages.length - 1]?.createdAt ?? startedAt;
   const showWindowBody = windowMode !== "minimized";
   const showDock = windowMode === "windowed";
   const pagePaddingClass = windowMode === "maximized" ? "px-0 py-0" : "px-6 py-6";
@@ -435,6 +436,8 @@ export function ChatWorkspace() {
     threadMode === "new"
       ? (sessionId ? sessions?.sessions.find((entry) => entry.id === sessionId) ?? null : null)
       : sessions?.sessions.find((entry) => entry.id === sessionId) ?? sessions?.sessions[0] ?? null;
+  const startedAt = messages[0]?.createdAt ?? resolveTimestamp(activeSession?.last_updated) ?? 0;
+  const lastEventAt = messages[messages.length - 1]?.createdAt ?? startedAt;
   const openLoops = extractOpenLoops(messages, warnings);
   const continuityOpenLoops =
     openLoops.length > 0
