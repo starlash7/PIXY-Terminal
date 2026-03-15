@@ -11,35 +11,18 @@ type AgentPresenceProps = {
   hasWarning: boolean;
 };
 
-type PresenceAsset = {
-  image: HTMLImageElement;
-  state: AgentState;
-};
-
-type PresenceProfile = {
-  focusX: number;
-  focusY: number;
-  zoom: number;
-};
-
 const ASCII_RAMP = " .'`^,:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$";
 const BACKGROUND_RAMP = " .:-";
 
-const STATE_TINT: Record<AgentState, [number, number, number]> = {
-  idle: [214, 224, 255],
-  listening: [255, 213, 102],
-  thinking: [222, 182, 255],
-  responding: [164, 255, 219],
-  warning: [255, 130, 130],
+type PresenceTone = "base" | "active" | "response";
+
+const TONE_TINT: Record<PresenceTone, [number, number, number]> = {
+  base: [86, 90, 98],
+  active: [102, 255, 158],
+  response: [255, 96, 96],
 };
 
-const STATE_PROFILE: Record<AgentState, PresenceProfile> = {
-  idle: { focusX: 0.52, focusY: 0.4, zoom: 1.28 },
-  listening: { focusX: 0.52, focusY: 0.4, zoom: 1.3 },
-  thinking: { focusX: 0.515, focusY: 0.39, zoom: 1.32 },
-  responding: { focusX: 0.525, focusY: 0.41, zoom: 1.26 },
-  warning: { focusX: 0.515, focusY: 0.39, zoom: 1.34 },
-};
+const PRESENCE_PROFILE = { focusX: 0.52, focusY: 0.4, zoom: 1.28 };
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -55,16 +38,15 @@ function renderAsciiFrame(
   image: HTMLImageElement,
   width: number,
   height: number,
-  state: AgentState,
+  tone: PresenceTone,
   time: number,
 ) {
-  const cell =
-    state === "thinking" ? 5.05 : state === "warning" ? 5.2 : state === "responding" ? 5.25 : 5.35;
+  const cell = 5.2;
   const lineHeight = cell * 1.01;
   const columns = Math.max(28, Math.floor(width / cell));
   const rows = Math.max(34, Math.floor(height / lineHeight));
-  const tint = STATE_TINT[state];
-  const profile = STATE_PROFILE[state];
+  const tint = TONE_TINT[tone];
+  const profile = PRESENCE_PROFILE;
   const phase = time * 0.001;
 
   if (bufferCtx.canvas.width !== columns || bufferCtx.canvas.height !== rows) {
@@ -90,8 +72,8 @@ function renderAsciiFrame(
 
   const offsetX = columns * 0.5 - drawWidth * profile.focusX;
   const offsetY = rows * 0.48 - drawHeight * profile.focusY;
-  const driftX = state === "warning" ? Math.sin(phase * 9) * 0.42 : 0;
-  const driftY = state === "warning" ? Math.cos(phase * 8) * 0.18 : 0;
+  const driftX = 0;
+  const driftY = 0;
   const visibleDriftX = (driftX / Math.max(1, columns)) * width;
   const visibleDriftY = (driftY / Math.max(1, rows)) * height;
 
@@ -127,14 +109,13 @@ function renderAsciiFrame(
     visibleDrawHeight,
   );
   ctx.restore();
-  ctx.fillStyle = "rgba(4, 7, 13, 0.28)";
+  ctx.fillStyle = tone === "base" ? "rgba(4, 7, 13, 0.52)" : "rgba(4, 7, 13, 0.34)";
   ctx.fillRect(0, 0, width, height);
   ctx.font = `${cell}px "JetBrains Mono", monospace`;
   ctx.textBaseline = "top";
 
   for (let row = 0; row < rows; row += 1) {
-    const scanShift =
-      state === "warning" && row % 6 === 0 ? Math.sin(phase * 32 + row) * 2.2 : 0;
+    const scanShift = 0;
     const waveShift = 0;
     const scanFade = 0.92 + Math.sin(phase * 6 + row * 0.42) * 0.08;
 
@@ -193,26 +174,11 @@ function renderAsciiFrame(
         continue;
       }
 
-      const tintMix =
-        state === "idle"
-          ? 0.16
-          : state === "responding"
-            ? 0.24
-            : state === "thinking"
-              ? 0.22
-              : state === "listening"
-                ? 0.18
-                : 0.34;
+      const tintMix = tone === "base" ? 0.08 : tone === "active" ? 0.2 : 0.3;
 
       const neutralTone = Math.round(38 + weightedSignal * 176);
       const paletteMix =
-        state === "warning"
-          ? 0.58
-          : state === "responding"
-            ? 0.52
-            : state === "thinking"
-              ? 0.5
-              : 0.46;
+        tone === "base" ? 0.28 : tone === "active" ? 0.44 : 0.56;
       const outRed = mixChannel(neutralTone, tint[0], paletteMix + tintMix * 0.2);
       const outGreen = mixChannel(neutralTone, tint[1], paletteMix + tintMix * 0.2);
       const outBlue = mixChannel(neutralTone, tint[2], paletteMix + tintMix * 0.2);
@@ -241,12 +207,12 @@ function renderAsciiFrame(
 
   const sweepPosition = (Math.sin(phase * 1.6) * 0.5 + 0.5) * height;
   const sweepAlpha =
-    state === "idle" ? 0.02 : state === "thinking" ? 0.04 : state === "warning" ? 0.08 : 0.03;
+    tone === "base" ? 0.01 : tone === "active" ? 0.03 : 0.06;
 
   ctx.fillStyle = `rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${sweepAlpha})`;
   ctx.fillRect(0, sweepPosition, width, Math.max(8, height * 0.035));
 
-  if (state === "warning") {
+  if (tone === "response") {
     ctx.fillStyle = "rgba(255, 120, 120, 0.08)";
     for (let index = 0; index < 4; index += 1) {
       const y = ((phase * 120 + index * 56) % height);
@@ -255,52 +221,58 @@ function renderAsciiFrame(
   }
 }
 
-function loadPresenceImage(state: AgentState) {
-  return new Promise<PresenceAsset>((resolve, reject) => {
+function loadPresenceImage() {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new window.Image();
     image.decoding = "async";
-    image.onload = () => resolve({ image, state });
-    image.onerror = () => reject(new Error(`Failed to load presence image for ${state}`));
-    image.src = `/api/character-image?state=${state}`;
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load presence image."));
+    image.src = "/api/character-image?state=idle";
 
     if (image.complete && image.naturalWidth > 0) {
-      resolve({ image, state });
+      resolve(image);
     }
   });
 }
 
-function HolographicMuse({ state }: { state: AgentState }) {
+function HolographicMuse({
+  state,
+  messageCount,
+  hasWarning,
+}: {
+  state: AgentState;
+  messageCount: number;
+  hasWarning: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const currentAssetRef = useRef<PresenceAsset | null>(null);
-  const previousAssetRef = useRef<PresenceAsset | null>(null);
-  const transitionStartRef = useRef<number | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const toneRef = useRef<PresenceTone>("base");
 
   useEffect(() => {
     let cancelled = false;
 
-    void loadPresenceImage(state)
-      .then((asset) => {
+    void loadPresenceImage()
+      .then((image) => {
         if (cancelled) {
           return;
         }
-
-        if (!currentAssetRef.current) {
-          currentAssetRef.current = asset;
-          previousAssetRef.current = null;
-          transitionStartRef.current = null;
-          return;
-        }
-
-        previousAssetRef.current = currentAssetRef.current;
-        currentAssetRef.current = asset;
-        transitionStartRef.current = performance.now();
+        imageRef.current = image;
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, [state]);
+  }, []);
+
+  useEffect(() => {
+    toneRef.current =
+      hasWarning || state === "responding" || state === "thinking" || state === "listening"
+        ? "response"
+        : messageCount > 0
+          ? "active"
+          : "base";
+  }, [hasWarning, messageCount, state]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -310,15 +282,11 @@ function HolographicMuse({ state }: { state: AgentState }) {
 
     const context = canvas.getContext("2d");
     const layerA = document.createElement("canvas");
-    const layerB = document.createElement("canvas");
     const layerContextA = layerA.getContext("2d");
-    const layerContextB = layerB.getContext("2d");
     const bufferA = document.createElement("canvas");
-    const bufferB = document.createElement("canvas");
     const bufferContextA = bufferA.getContext("2d", { willReadFrequently: true });
-    const bufferContextB = bufferB.getContext("2d", { willReadFrequently: true });
 
-    if (!context || !layerContextA || !layerContextB || !bufferContextA || !bufferContextB) {
+    if (!context || !layerContextA || !bufferContextA) {
       return;
     }
 
@@ -340,8 +308,6 @@ function HolographicMuse({ state }: { state: AgentState }) {
 
       layerA.width = width;
       layerA.height = height;
-      layerB.width = width;
-      layerB.height = height;
     };
 
     const draw = (time: number) => {
@@ -352,55 +318,19 @@ function HolographicMuse({ state }: { state: AgentState }) {
       const bounds = canvas.getBoundingClientRect();
       const width = Math.max(1, Math.floor(bounds.width));
       const height = Math.max(1, Math.floor(bounds.height));
-      const currentAsset = currentAssetRef.current;
+      const image = imageRef.current;
+      const tone = toneRef.current;
 
       context.clearRect(0, 0, width, height);
       context.fillStyle = "#04070d";
       context.fillRect(0, 0, width, height);
 
-      if (currentAsset) {
-        const previousAsset = previousAssetRef.current;
-        const transitionStart = transitionStartRef.current;
-        const progress =
-          previousAsset && transitionStart !== null
-            ? clamp((time - transitionStart) / 320, 0, 1)
-            : 1;
-
-        renderAsciiFrame(
-          layerContextA,
-          bufferContextA,
-          currentAsset.image,
-          width,
-          height,
-          currentAsset.state,
-          time,
-        );
-
-        if (previousAsset && progress < 1) {
-          renderAsciiFrame(
-            layerContextB,
-            bufferContextB,
-            previousAsset.image,
-            width,
-            height,
-            previousAsset.state,
-            time,
-          );
-          context.save();
-          context.globalAlpha = 1 - progress;
-          context.drawImage(layerB, 0, 0, width, height);
-          context.restore();
-        }
-
+      if (image) {
+        renderAsciiFrame(layerContextA, bufferContextA, image, width, height, tone, time);
         context.save();
-        context.globalAlpha = previousAsset ? progress : 1;
+        context.globalAlpha = 1;
         context.drawImage(layerA, 0, 0, width, height);
         context.restore();
-
-        if (previousAsset && progress >= 1) {
-          previousAssetRef.current = null;
-          transitionStartRef.current = null;
-        }
       }
 
       frameId = window.requestAnimationFrame(draw);
@@ -425,12 +355,12 @@ function HolographicMuse({ state }: { state: AgentState }) {
   );
 }
 
-export function AgentPresence({ state }: AgentPresenceProps) {
+export function AgentPresence({ state, messageCount, hasWarning }: AgentPresenceProps) {
   return (
     <div className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-[22rem] items-end justify-center px-6 pb-6">
       <div className="relative h-[30rem] w-full">
         <div className="absolute inset-x-0 bottom-0 top-12">
-          <HolographicMuse state={state} />
+          <HolographicMuse state={state} messageCount={messageCount} hasWarning={hasWarning} />
         </div>
       </div>
     </div>
