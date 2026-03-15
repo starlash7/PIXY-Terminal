@@ -71,9 +71,13 @@ export function AppShell({
             <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
               <div className="max-w-3xl space-y-3">
                 <div className="flex flex-wrap items-center gap-3 text-[0.7rem] uppercase tracking-[0.32em] text-[var(--muted)]">
-                  <span className="rounded-full border border-[var(--line)] bg-white/3 px-3 py-1">
-                    PIXY TERMINAL
-                  </span>
+                  <Link
+                    href="/"
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-white/3 px-3 py-1 no-underline"
+                  >
+                    <span className="text-[var(--accent-amber)]">PIXY</span>
+                    <span className="text-[var(--accent-purple)]">TERMINAL</span>
+                  </Link>
                   <span className="rounded-full border border-emerald-300/18 bg-emerald-300/8 px-3 py-1 text-[var(--accent)]">
                     {accentLabel}
                   </span>

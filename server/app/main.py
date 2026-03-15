@@ -581,7 +581,9 @@ def wrap_message_with_memory(message: str, paths: HermesPaths) -> str:
         return message
     return (
         "Persistent memory is mounted for this user. Use it only when relevant, "
-        "and do not restate it unless it matters.\n\n"
+        "and do not restate it unless it matters.\n"
+        "Reply in the same language as the current user message by default. "
+        "If the user writes in Korean, concise Korean is preferred.\n\n"
         f"{memory_block}\n\n"
         "Current user message:\n"
         f"{message}"

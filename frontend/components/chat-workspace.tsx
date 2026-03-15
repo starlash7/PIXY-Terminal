@@ -463,6 +463,14 @@ export function ChatWorkspace() {
   const continuityMetricValue = String(activeSession?.message_count ?? messages.length).padStart(2, "0");
   const latestAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
   const stateTrace = buildStateTrace(agentState, isSending, warnings.length > 0 || Boolean(error));
+  const assistantSessionChipClass =
+    "rounded-full border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-amber)]";
+  const assistantMemoryChipClass =
+    "rounded-full border border-[rgba(239,68,68,0.22)] bg-[rgba(239,68,68,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-[var(--accent-red)]";
+  const assistantStateChipClass =
+    agentState === "warning"
+      ? "rounded-full border border-[rgba(239,68,68,0.22)] bg-[rgba(239,68,68,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-red)]"
+      : "rounded-full border border-[rgba(245,158,11,0.22)] bg-[rgba(245,158,11,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-amber)]";
   const recentLearning =
     memorySignals[1] ??
     messages
@@ -480,7 +488,13 @@ export function ChatWorkspace() {
       style={{ fontFamily: "var(--font-pixel)" }}
     >
       <div className="border-b border-[var(--border-default)] px-6 py-4">
-        <h1 className="text-[20px] font-semibold text-[var(--accent-amber)]">PIXY TERMINAL</h1>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 no-underline"
+        >
+          <span className="text-[20px] font-semibold text-[var(--accent-amber)]">PIXY</span>
+          <span className="text-[20px] font-semibold text-[var(--accent-purple)]">TERMINAL</span>
+        </Link>
       </div>
       <div className={`min-h-0 flex-1 ${pagePaddingClass}`}>
         <div className={`mx-auto flex h-full ${containerWidthClass} flex-col gap-4`}>
@@ -682,7 +696,7 @@ export function ChatWorkspace() {
                                 <MarkdownBlock content={message.content} />
                                 {message.id === latestAssistantId ? (
                                   <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border-default)] pt-3">
-                                    <span className="rounded-full border border-[rgba(168,85,247,0.18)] bg-[rgba(168,85,247,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--accent-purple)]">
+                                    <span className={assistantSessionChipClass}>
                                       session {shortSessionLabel(sessionId)}
                                     </span>
                                     {(message.memoryEvidence?.length ? message.memoryEvidence : memorySignals)
@@ -690,12 +704,12 @@ export function ChatWorkspace() {
                                       .map((signal) => (
                                       <span
                                         key={signal}
-                                        className="rounded-full border border-[rgba(34,197,94,0.18)] bg-[rgba(34,197,94,0.08)] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-[var(--accent-green)]"
+                                        className={assistantMemoryChipClass}
                                       >
                                         memory {summarizeText(signal, 28)}
                                       </span>
                                     ))}
-                                    <span className="rounded-full border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                                    <span className={assistantStateChipClass}>
                                       state {agentState}
                                     </span>
                                     {message.skillInvocation ? (
